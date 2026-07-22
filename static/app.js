@@ -122,6 +122,14 @@ const renderConfig = async (container) => {
         <div class="form-group" style="max-width:120px"><label>用户名</label><input id="c-su" value="${d.config.smb_username}"></div>
         <div class="form-group" style="max-width:160px"><label>密码</label><input id="c-sp" type="password" value="${d.config.smb_password}"></div>
       </div>
+      <div class="btn-row"><button class="btn" onclick="testSMB()">🔄 测试 SMB 挂载</button><span id="smb-test-r" style="font-size:13px;color:#8b949e;"></span></div>
+    </div>
+    <div class="card"><div class="card-title">TMDB 配置</div>
+      <div class="form-row">
+        <div class="form-group" style="max-width:300px"><label>API Key</label><input id="c-tk" value="${d.config.tmdb_api_key}"></div>
+        <div class="form-group" style="max-width:100px"><label>请求间隔(秒)</label><input id="c-tr" value="${d.config.tmdb_rate_limit}"></div>
+        <div class="form-group" style="max-width:100px"><label>并发线程</label><input id="c-tw" value="${d.config.tmdb_workers}"></div>
+      </div>
     </div>
     <div class="card"><div class="card-title">去重策略</div>
       <div class="form-row">
@@ -141,12 +149,25 @@ window.testQB = async () => {
   if (d) { el.textContent = d.status === 'ok' ? '✅ 连接成功' : `❌ ${d.message}`; el.style.color = d.status === 'ok' ? '#3fb950' : '#f85149'; }
 };
 
+window.testSMB = async () => {
+  const el = document.getElementById('smb-test-r'); el.textContent = '测试中...';
+  const d = await api('/api/config/test-smb', { method: 'POST', body: JSON.stringify({
+    smb_host: document.getElementById('c-sh').value, smb_share: document.getElementById('c-ss').value,
+    smb_username: document.getElementById('c-su').value, smb_password: document.getElementById('c-sp').value }) });
+  if (d) {
+    el.textContent = d.status === 'ok' ? `✅ ${d.message}` : `❌ ${d.message}`;
+    el.style.color = d.status === 'ok' ? '#3fb950' : '#f85149';
+  }
+};
+
 window.saveCfg = async () => {
   const d = await api('/api/config', { method: 'PUT', body: JSON.stringify({
     qb_host: document.getElementById('c-qb-h').value, qb_port: parseInt(document.getElementById('c-qb-p').value),
     qb_username: document.getElementById('c-qb-u').value, qb_password: document.getElementById('c-qb-pw').value,
     smb_host: document.getElementById('c-sh').value, smb_share: document.getElementById('c-ss').value,
     smb_username: document.getElementById('c-su').value, smb_password: document.getElementById('c-sp').value,
+    tmdb_api_key: document.getElementById('c-tk').value, tmdb_rate_limit: parseFloat(document.getElementById('c-tr').value) || 0.3,
+    tmdb_workers: parseInt(document.getElementById('c-tw').value) || 1,
     categories: document.getElementById('c-cat').value.split(',').map(s => s.trim()).filter(Boolean),
     collection_strategy: document.getElementById('c-col').value,
     min_file_size_mb: parseInt(document.getElementById('c-ms').value) || 300 }) });

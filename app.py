@@ -133,6 +133,44 @@ def api_test_qb():
         config.set("qb_password", orig_pass)
 
 
+@app.route("/api/config/test-smb", methods=["POST"])
+def api_test_smb():
+    """Test SMB connection by attempting to mount and list files."""
+    import subprocess, os
+    data = request.get_json(silent=True) or {}
+    host = data.get("smb_host", config.get("smb_host"))
+    share = data.get("smb_share", config.get("smb_share"))
+    username = data.get("smb_username", config.get("smb_username"))
+    password = data.get("smb_password", config.get("smb_password"))
+    mount_point = data.get("smb_mount_point", config.get("smb_mount_point"))
+
+    # Try mount
+    os.makedirs(mount_point, exist_ok=True)
+    try:
+        subprocess.run(["sudo", "mount", "-t", "cifs",
+            f"//{host}/{share}", mount_point,
+            "-o", f"username={username},password={password},iocharset=utf8,file_mode=0755,dir_mode=0755,noexec,nosuid,nodev"],
+            capture_output=True, text=True, timeout=15)
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"挂载失败: {e}"})
+
+    # Check if mounted
+    if not os.path.ismount(mount_point):
+        return jsonify({"status": "error", "message": "挂载失败，请检查地址和认证信息"})
+
+    # List files
+    try:
+        dirs = [d for d in os.listdir(mount_point) if os.path.isdir(os.path.join(mount_point, d))]
+        return jsonify({"status": "ok", "message": f"挂载成功，找到 {len(dirs)} 个目录", "dirs": dirs[:20]})
+    except Exception as e:
+        return jsonify({"status": "ok", "message": f"挂载成功但无法读取目录: {e}"})
+    finally:
+        try:
+            subprocess.run(["sudo", "umount", mount_point], capture_output=True, timeout=10)
+        except Exception:
+            pass
+
+
 # ─── 种子 API ───────────────────────────────────────────────
 
 @app.route("/api/categories", methods=["GET"])
