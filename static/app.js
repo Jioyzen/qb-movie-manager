@@ -73,35 +73,93 @@ const startPolling = () => {
   state.pollTimer = setInterval(async () => {
     const data = await api('/api/progress');
     if (!data) return;
+
     if (data.running) {
-      setStatus(data.progress.message, true);
       state.busy = true;
-    } else if (state.busy) {
+      setStatus(data.progress.message, true);
+      // 实时更新进度条（如果存在）
+      updateProgressUI(data.progress);
+    } else if (state.busy || data.progress.current > 0) {
+      // 任务刚完成，或有缓存数据
       state.busy = false;
       clearInterval(state.pollTimer);
       state.pollTimer = null;
       setStatus('就绪');
-      // 刷新当前步骤
-      refreshCurrentStep();
+      // 隐藏进度条
+      document.querySelectorAll('.progress-bar').forEach(el => el.style.display = 'none');
+      // 刷新当前步骤数据
+      await refreshCurrentStep();
     }
   }, 1000);
 };
 
-const refreshCurrentStep = () => {
+const updateProgressUI = (progress) => {
+  const pct = progress.total > 0 ? Math.round(progress.current / progress.total * 100) : 0;
+  const msg = `${progress.message} (${pct}%)`;
+
+  // 更新进度条
+  document.querySelectorAll('.progress-bar .fill').forEach(el => {
+    el.style.width = `${pct}%`;
+  });
+  // 更新进度文本
+  document.querySelectorAll('.progress-text, #fetch-status, #analyze-status, #dedup-status').forEach(el => {
+    if (el) el.textContent = msg;
+  });
+  // 确保进度条可见
+  document.querySelectorAll('.progress-bar').forEach(el => {
+    el.style.display = 'block';
+  });
+};
+
+const refreshCurrentStep = async () => {
   switch (state.step) {
-    case 1: renderFetchTorrents(); break;
-    case 2: renderAnalyze(); break;
-    case 3: renderDedup(); break;
+    case 1:
+      // 从 API 拉取种子数据
+      const tData = await api('/api/torrents');
+      if (tData && tData.status === 'ok') {
+        state.torrents = tData.torrents;
+      }
+      renderFetchTorrents();
+      break;
+    case 2:
+      const pData = await api('/api/analyze/profiles');
+      if (pData && pData.status === 'ok') {
+        state.profiles = pData.profiles;
+      }
+      renderAnalyze();
+      break;
+    case 3:
+      const dData = await api('/api/dedup/results');
+      if (dData && dData.status === 'ok') {
+        state.dedupResults = dData.groups;
+        state.dedupOverview = dData.summary;
+      }
+      renderDedup();
+      break;
     case 4: renderCleanup(); break;
   }
 };
 
 // ─── 侧边栏切换 ───────────────────────────────────────────────
-window.switchStep = (idx) => {
+window.switchStep = async (idx) => {
   state.step = idx;
   document.querySelectorAll('.step').forEach((el, i) => {
     el.className = 'step' + (i === idx ? ' active' : '');
   });
+  // 切换步骤时先拉取最新数据
+  if (idx === 1) {
+    const tData = await api('/api/torrents');
+    if (tData && tData.status === 'ok') state.torrents = tData.torrents;
+  } else if (idx === 2) {
+    const pData = await api('/api/analyze/profiles');
+    if (pData && pData.status === 'ok') state.profiles = pData.profiles;
+  } else if (idx === 3) {
+    const dData = await api('/api/dedup/results');
+    if (dData && dData.status === 'ok') {
+      state.dedupResults = dData.groups;
+      state.dedupOverview = dData.summary;
+    }
+  }
   renderContent();
 };
 
