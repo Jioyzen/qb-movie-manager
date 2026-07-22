@@ -161,6 +161,14 @@ window.switchStep = async (idx) => {
     }
   }
   renderContent();
+
+  // 检查是否有后台任务正在运行，如果有则自动启动轮询
+  const prog = await api('/api/progress');
+  if (prog && prog.running) {
+    state.busy = true;
+    setStatus(prog.progress.message, true);
+    startPolling();
+  }
 };
 
 // ─── 主渲染 ───────────────────────────────────────────────────
