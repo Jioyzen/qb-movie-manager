@@ -2,8 +2,8 @@
 
 import time
 import requests
-from backend.config import config
-from backend.parser import extract_chinese
+from config import config
+from parser import extract_chinese
 
 
 class TMDBClient:

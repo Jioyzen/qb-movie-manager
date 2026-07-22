@@ -7,5 +7,13 @@
   "tmdb_rate_limit": 0.3,
   "tmdb_workers": 1,
   "min_file_size_mb": 300,
-  "categories": []
+  "categories": ["4K电影", "高清电影"],
+  "smb_host": "192.168.2.200",
+  "smb_share": "media",
+  "smb_username": "zeng",
+  "smb_password": "Zz198903+",
+  "smb_mount_point": "/mnt/qb_downloads",
+  "qb_download_prefix": "/downloads",
+  "collection_strategy": "skip",
+  "priority_layers": ["audio", "subtitle", "source", "resolution", "hdr"]
 }
