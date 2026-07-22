@@ -15,37 +15,19 @@
       <span id="statusText">就绪</span>
     </div>
   </header>
-
   <div class="main">
     <nav class="sidebar" id="sidebar">
-      <div class="step" data-step="0" onclick="switchStep(0)">
-        <div class="step-icon">&#x2699;</div>
-        <div class="step-label">配置</div>
-      </div>
-      <div class="step" data-step="1" onclick="switchStep(1)">
-        <div class="step-icon">&#x2B07;</div>
-        <div class="step-label">获取种子</div>
-      </div>
-      <div class="step" data-step="2" onclick="switchStep(2)">
-        <div class="step-icon">&#x1F50D;</div>
-        <div class="step-label">深度分析</div>
-      </div>
-      <div class="step" data-step="3" onclick="switchStep(3)">
-        <div class="step-icon">&#x1F3AF;</div>
-        <div class="step-label">去重筛选</div>
-      </div>
-      <div class="step" data-step="4" onclick="switchStep(4)">
-        <div class="step-icon">&#x1F5D1;</div>
-        <div class="step-label">清理删除</div>
-      </div>
+      <div class="step" data-step="0" onclick="switchStep(0)"><div class="step-icon">&#x2699;</div><div class="step-label">配置</div></div>
+      <div class="step" data-step="1" onclick="switchStep(1)"><div class="step-icon">&#x2B07;</div><div class="step-label">获取种子</div></div>
+      <div class="step" data-step="2" onclick="switchStep(2)"><div class="step-icon">&#x1F3F7;</div><div class="step-label">TMDB匹配</div></div>
+      <div class="step" data-step="3" onclick="switchStep(3)"><div class="step-icon">&#x1F50D;</div><div class="step-label">深度分析</div></div>
+      <div class="step" data-step="4" onclick="switchStep(4)"><div class="step-icon">&#x1F3AF;</div><div class="step-label">去重筛选</div></div>
+      <div class="step" data-step="5" onclick="switchStep(5)"><div class="step-icon">&#x1F5D1;</div><div class="step-label">清理删除</div></div>
     </nav>
-
     <div class="content" id="content"></div>
   </div>
 </div>
-
 <div id="toast" class="toast hidden"></div>
-
 <script src="/static/app.js"></script>
 </body>
 </html>

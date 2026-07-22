@@ -1,7 +1,7 @@
-"""Media Analyzer - SMB 挂载 + MediaInfo 深度分析。
+"""Media Analyzer - SMB mount + MediaInfo deep analysis.
 
-通过 SMB 挂载 qBittorrent 下载目录，使用 mediainfo CLI
-提取视频文件的音轨、字幕、HDR 详细信息，并缓存结果。
+Uses qBittorrent API to get per-torrent file lists, then runs mediainfo
+on each video file via SMB mount. Results are cached.
 """
 
 import json
@@ -16,9 +16,9 @@ from typing import Optional
 
 from config import config
 from parser import parse_filename
-from scoring_engine import MediaProfile, AUDIO_SCORES, SUBTITLE_SCORES, SOURCE_SCORES, RESOLUTION_SCORES, HDR_SCORES
+from scoring_engine import MediaProfile
 
-# ─── 合集种子关键词 ────────────────────────────────────────
+# ─── Collection seed keywords ───────────────────────────────────
 
 COLLECTION_KEYWORDS = re.compile(
     r"(合集|collection|pack|box.?set|trilogy|series|全集|系列|"
@@ -27,7 +27,7 @@ COLLECTION_KEYWORDS = re.compile(
     re.I,
 )
 
-# ─── 缓存 ───────────────────────────────────────────────────
+# ─── Cache ──────────────────────────────────────────────────────
 
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "data", "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -60,10 +60,10 @@ def _write_cache(file_path: str, file_size: int, mtime: float, data: dict):
         pass
 
 
-# ─── SMB 挂载管理 ──────────────────────────────────────────
+# ─── SMB mount management ───────────────────────────────────────
 
 def _ensure_mount(mount_point: str) -> bool:
-    """确保 SMB 共享已挂载到指定路径。"""
+    """Ensure SMB share is mounted."""
     if os.path.ismount(mount_point):
         return True
     host = config.get("smb_host")
@@ -72,7 +72,6 @@ def _ensure_mount(mount_point: str) -> bool:
     password = config.get("smb_password")
     os.makedirs(mount_point, exist_ok=True)
     try:
-        # 使用 sudo 挂载（密码用明文，mount.cifs 不支持输入密码重定向）
         cmd = [
             "sudo", "mount", "-t", "cifs",
             f"//{host}/{share}",
@@ -89,22 +88,53 @@ def _ensure_mount(mount_point: str) -> bool:
         return False
 
 
-def _smb_path(torrent_save_path: str) -> Optional[str]:
-    """将 qBittorrent 的 save_path 映射到本地 SMB 挂载路径。"""
+def _smb_path(qb_save_path: str, torrent_name: str) -> Optional[str]:
+    """Map qBittorrent save_path to local SMB mount path."""
     mount_point = config.get("smb_mount_point")
     prefix = config.get("qb_download_prefix")
-    if torrent_save_path.startswith(prefix):
-        relative = torrent_save_path[len(prefix):].lstrip("/")
+    if qb_save_path.startswith(prefix):
+        relative = qb_save_path[len(prefix):].lstrip("/")
     else:
-        # 如果路径不以 /downloads 开头，尝试直接使用
-        relative = torrent_save_path.lstrip("/")
-    return os.path.join(mount_point, relative)
+        relative = qb_save_path.lstrip("/")
+    # The torrent content is at save_path/torrent_name
+    return os.path.join(mount_point, relative, torrent_name)
 
 
-# ─── MediaInfo 解析 ────────────────────────────────────────
+# ─── qBittorrent file list API ──────────────────────────────────
+
+def _get_torrent_files(hash: str) -> list[dict]:
+    """Fetch file list for a torrent via qBittorrent API."""
+    import requests
+    session = requests.Session()
+    qb_url = config.qb_url
+    try:
+        # Login
+        r = session.post(
+            f"{qb_url}/api/v2/auth/login",
+            data={"username": config.get("qb_username"), "password": config.get("qb_password")},
+            timeout=10
+        )
+        # Get files
+        r = session.get(
+            f"{qb_url}/api/v2/torrents/files",
+            params={"hash": hash},
+            timeout=30
+        )
+        if r.status_code != 200:
+            return []
+        files = r.json()
+        # Add index
+        for i, f in enumerate(files):
+            f["index"] = i
+        return files
+    except Exception as e:
+        print(f"[qb_files] Error for {hash}: {e}", flush=True)
+        return []
+
+
+# ─── MediaInfo parsing ──────────────────────────────────────────
 
 def _run_mediainfo(file_path: str) -> Optional[dict]:
-    """运行 mediainfo CLI 并返回 JSON 输出。"""
     try:
         result = subprocess.run(
             ["mediainfo", "--Output=JSON", file_path],
@@ -118,64 +148,56 @@ def _run_mediainfo(file_path: str) -> Optional[dict]:
 
 
 def _detect_hdr_level(video_tracks: list) -> tuple[str, str]:
-    """从视频轨中检测 HDR 类型，返回 (hdr_level, hdr_detail)。"""
+    """Detect HDR type from video tracks."""
     for track in video_tracks:
-        # Dolby Vision
-        dv_version = track.get("HDR_Format_Version", "") or ""
-        dv_compat = track.get("HDR_Format_Compatibility", "") or ""
-        hdr_format = track.get("HDR_Format", "") or ""
+        hdr_format = (track.get("HDR_Format", "") or "").lower()
+        hdr_profile = (track.get("HDR_Format_Profile", "") or "").lower()
+        hdr_compat = (track.get("HDR_Format_Compatibility", "") or "").lower()
 
-        if "Dolby Vision" in hdr_format or "Dolby Vision" in dv_version:
-            # 判断 profile
-            if "7.6" in dv_version or "p7" in dv_version.lower():
-                return "dv_p7", "Dolby Vision P7 (双层)"
-            if "8" in dv_version or "p8" in dv_version.lower():
+        if "dolby vision" in hdr_format:
+            if "08" in hdr_profile or "p8" in hdr_profile:
                 return "dv_p8", "Dolby Vision P8"
-            if "5" in dv_version or "p5" in dv_version.lower():
+            if "07" in hdr_profile or "p7" in hdr_profile:
+                return "dv_p7", "Dolby Vision P7 (双层)"
+            if "05" in hdr_profile or "p5" in hdr_profile:
                 return "dv_p5", "Dolby Vision P5"
-            # 通过兼容性判断
-            if "SMPTE ST 2094" in dv_compat:
+            if "smpte st 2086" in hdr_compat:
                 return "dv_p8", "Dolby Vision P8"
             return "dv_p7", "Dolby Vision (未知 Profile)"
 
-        if "HDR10+" in hdr_format or "HDR10+" in str(track):
+        if "hdr10+" in hdr_format:
             return "hdr10plus", "HDR10+"
 
-        if hdr_format == "HDR10" or "HDR10" in str(track.get("HDR_Format")) or "SMPTE ST 2086" in str(track):
+        if "hdr10" in hdr_format or "hdr10" in hdr_compat or "smpte st 2086" in hdr_compat:
             return "hdr10", "HDR10"
 
     return "sdr", "SDR"
 
 
 def _detect_audio_level(audio_tracks: list) -> tuple[str, str]:
-    """从音轨中检测中文音轨情况，返回 (audio_level, audio_detail)。"""
+    """Detect Chinese audio from audio tracks."""
     for track in audio_tracks:
         lang = (track.get("Language") or "").lower()
         codec = (track.get("Format") or "").lower()
-        profile = (track.get("Format_AdditionalFeatures") or "").lower()
         commercial = (track.get("Commercial_name") or "").lower()
 
-        # 判断是否中文
         is_chinese = lang in ("zh", "chi", "cn", "zho", "zh-cn", "zh-tw")
-
         if not is_chinese:
             continue
 
-        # 判断是否 Atmos
-        is_atmos = "atmos" in profile or "atmos" in commercial or "atmos" in codec
+        is_atmos = "atmos" in commercial.lower()
 
         if is_atmos:
-            detail = f"国语 {commercial or codec} Atmos"
-            return "chinese_atmos", detail
+            return "chinese_atmos", f"国语 {commercial} Atmos"
         else:
-            detail = f"国语 {commercial or codec} / {track.get('Channel(s)', '?')}ch"
-            return "chinese_audio", detail
+            channels = track.get("Channel(s)", "?")
+            return "chinese_audio", f"国语 {commercial or codec} {channels}ch"
 
     return "none", ""
 
 
 def _detect_subtitle_level(text_tracks: list) -> tuple[str, str]:
-    """从字幕轨中检测中文字幕情况，返回 (subtitle_level, subtitle_detail)。"""
+    """Detect Chinese subtitle from text tracks."""
     has_forced = False
     has_normal = False
     forced_detail = ""
@@ -190,7 +212,6 @@ def _detect_subtitle_level(text_tracks: list) -> tuple[str, str]:
         if not is_chinese:
             continue
 
-        # 判断是否特效字幕 (ASS/SSA 通常支持特效)
         is_advanced = codec in ("ass", "ssa", "pgs")
         is_forced = forced in ("yes", "true")
 
@@ -211,8 +232,9 @@ def _detect_subtitle_level(text_tracks: list) -> tuple[str, str]:
     return "none", ""
 
 
+# ─── Filename helpers ───────────────────────────────────────────
+
 def _guess_source_from_filename(filename: str) -> str:
-    """从文件名猜测来源。"""
     name_lower = filename.lower()
     if any(kw in name_lower for kw in ["bluray", "blu-ray", "bdrip", "bd-rip", "蓝光"]):
         return "bluray"
@@ -222,7 +244,6 @@ def _guess_source_from_filename(filename: str) -> str:
 
 
 def _guess_resolution_from_filename(filename: str) -> str:
-    """从文件名猜测分辨率。"""
     name_lower = filename.lower()
     if any(kw in name_lower for kw in ["2160", "4k", "uhd"]):
         return "2160p"
@@ -232,16 +253,15 @@ def _guess_resolution_from_filename(filename: str) -> str:
 
 
 def _guess_hdr_from_filename(filename: str) -> str:
-    """从文件名猜测 HDR 类型（备用，当 MediaInfo 不可用时）。"""
     name_lower = filename.lower()
-    if "dolby" in name_lower or "dv" in name_lower.split():
+    if "dolby" in name_lower or "dovi" in name_lower or "dv" in name_lower:
         if "p7" in name_lower:
             return "dv_p7"
         elif "p8" in name_lower:
             return "dv_p8"
         elif "p5" in name_lower:
             return "dv_p5"
-        return "dv_p7"  # 默认为最好
+        return "dv_p8"
     if "hdr10plus" in name_lower or "hdr10+" in name_lower:
         return "hdr10plus"
     if "hdr" in name_lower:
@@ -250,128 +270,33 @@ def _guess_hdr_from_filename(filename: str) -> str:
 
 
 def is_collection_seed(seed_name: str) -> bool:
-    """判断种子名称是否为合集。"""
     return bool(COLLECTION_KEYWORDS.search(seed_name))
 
 
-# ─── 主分析函数 ────────────────────────────────────────────
+# ─── Main analysis ──────────────────────────────────────────────
 
-def analyze_torrent(
-    torrent: dict,
-    video_files: list[dict] = None,
-    use_mediainfo: bool = True,
-) -> list[MediaProfile]:
-    """
-    分析一个种子，返回 MediaProfile 列表。
-    - 单个电影种子：返回 1 个 MediaProfile
-    - 合集种子：每个视频文件返回 1 个 MediaProfile
-    """
-    seed_name = torrent.get("name", "")
-    save_path = torrent.get("save_path", "")
-    category = torrent.get("category", "")
-    is_collection = is_collection_seed(seed_name)
-
-    results = []
-    files_to_analyze = []
-
-    if is_collection and video_files:
-        # 合集种子：分析每个视频文件
-        for vf in video_files:
-            vname = os.path.basename(vf.get("name", ""))
-            vname_noext = os.path.splitext(vname)[0]
-            files_to_analyze.append({
-                "file_name": vname,
-                "file_name_noext": vname_noext,
-                "file_index": vf.get("index", 0),
-                "file_size": vf.get("size", 0),
-                "file_path": vf.get("name", ""),
-            })
-    else:
-        # 单个电影种子
-        files_to_analyze.append({
-            "file_name": seed_name,
-            "file_name_noext": seed_name,
-            "file_index": 0,
-            "file_size": torrent.get("size", 0),
-            "file_path": torrent.get("content_path", seed_name),
-        })
-
-    for f_info in files_to_analyze:
-        # 文件名解析
-        parsed = parse_filename(f_info["file_name_noext"])
-
-        # 构建 MediaProfile
-        mp = MediaProfile(
-            torrent_hash=torrent.get("hash", ""),
-            file_index=f_info["file_index"],
-            file_path=f_info["file_path"],
-            file_size=f_info["file_size"],
-            title=parsed.get("title", f_info["file_name_noext"]),
-            year=parsed.get("year", ""),
-            torrent_name=seed_name,
-            category=category,
-            is_collection=is_collection,
-            collection_name=seed_name if is_collection else "",
-        )
-
-        # 文件名来源猜测
-        mp.source = _guess_source_from_filename(f_info["file_name_noext"])
-        mp.source_detail = {
-            "bluray": "BluRay",
-            "webdl": "WEB-DL",
-            "other": parsed.get("source", "未知"),
-        }.get(mp.source, "未知")
-
-        mp.resolution = _guess_resolution_from_filename(f_info["file_name_noext"])
-        mp.resolution_detail = {
-            "2160p": "4K",
-            "1080p": "1080p",
-            "other": parsed.get("screen_size", "未知"),
-        }.get(mp.resolution, "未知")
-
-        # 文件名 HDR 猜测（作为后备）
-        if use_mediainfo:
-            # 先标记文件名猜测的 HDR，后面 MediaInfo 会覆盖
-            mp.hdr_level = _guess_hdr_from_filename(f_info["file_name_noext"])
-            mp.hdr_detail = {
-                "dv_p7": "Dolby Vision P7 (文件名猜测)",
-                "dv_p8": "Dolby Vision P8 (文件名猜测)",
-                "dv_p5": "Dolby Vision P5 (文件名猜测)",
-                "hdr10plus": "HDR10+ (文件名猜测)",
-                "hdr10": "HDR10 (文件名猜测)",
-                "sdr": "SDR",
-            }.get(mp.hdr_level, "SDR")
-        else:
-            mp.hdr_level = _guess_hdr_from_filename(f_info["file_name_noext"])
-            mp.hdr_detail = {
-                "dv_p7": "Dolby Vision P7",
-                "dv_p8": "Dolby Vision P8",
-                "dv_p5": "Dolby Vision P5",
-                "hdr10plus": "HDR10+",
-                "hdr10": "HDR10",
-                "sdr": "SDR",
-            }.get(mp.hdr_level, "SDR")
-
-        results.append(mp)
-
-    return results
-
-
-def analyze_with_mediainfo(
+def analyze_torrents(
     torrents: list[dict],
     progress_callback=None,
 ) -> list[MediaProfile]:
     """
-    对种子列表执行完整分析（文件名解析 + MediaInfo）。
-    返回所有视频文件的 MediaProfile 列表。
+    Analyze a list of torrents.
+
+    For each torrent:
+      1. Get file list from qBittorrent API
+      2. Filter video files (> min_size)
+      3. For single-movie torrents: analyze the largest video file
+      4. For collection torrents: analyze each video file as a separate movie
+
+    Returns a list of MediaProfile, one per movie (not per torrent).
     """
     mount_point = config.get("smb_mount_point")
     min_size_mb = config.get("min_file_size_mb", 300)
     min_size_bytes = min_size_mb * 1024 * 1024
 
-    # 挂载 SMB
+    # Mount SMB
     if not _ensure_mount(mount_point):
-        print("[media_analyzer] SMB mount failed, falling back to filename-only analysis", flush=True)
+        print("[media_analyzer] SMB mount failed, falling back to filename-only", flush=True)
         return _analyze_filename_only(torrents, progress_callback)
 
     all_profiles = []
@@ -381,57 +306,51 @@ def analyze_with_mediainfo(
         if progress_callback:
             progress_callback(idx, total, torrent.get("name", ""))
 
+        hash_val = torrent.get("hash", "")
         seed_name = torrent.get("name", "")
         save_path = torrent.get("save_path", "")
         category = torrent.get("category", "")
         is_collection = is_collection_seed(seed_name)
 
-        # 获取 SMB 上的文件列表
-        torrent_dir = _smb_path(save_path)
-        if not torrent_dir or not os.path.isdir(torrent_dir):
-            # 目录不存在，用文件名分析兜底
-            profiles = analyze_torrent(torrent, use_mediainfo=False)
-            all_profiles.extend(profiles)
+        # Get file list from qBittorrent API
+        files = _get_torrent_files(hash_val)
+        if not files:
+            # Fallback: filename-only analysis
+            mp = _analyze_by_filename(torrent)
+            if mp:
+                all_profiles.append(mp)
             continue
 
-        # 收集视频文件
+        # Filter video files
         video_files = []
-        for root, dirs, files in os.walk(torrent_dir):
-            for f in files:
-                if f.lower().endswith((".mkv", ".mp4", ".avi", ".ts", ".m2ts")):
-                    full_path = os.path.join(root, f)
-                    try:
-                        fsize = os.path.getsize(full_path)
-                    except OSError:
-                        continue
-                    if fsize < min_size_bytes:
-                        continue
-                    # 相对路径（用于 qB 文件列表匹配）
-                    rel_path = os.path.relpath(full_path, torrent_dir)
-                    video_files.append({
-                        "name": rel_path,
-                        "size": fsize,
-                        "index": len(video_files),
-                        "full_path": full_path,
-                    })
+        for f in files:
+            fname = f.get("name", "")
+            if not fname.lower().endswith((".mkv", ".mp4", ".avi", ".ts", ".m2ts", ".mov")):
+                continue
+            fsize = f.get("size", 0)
+            if fsize < min_size_bytes:
+                continue
+            video_files.append(f)
 
         if not video_files:
-            profiles = analyze_torrent(torrent, use_mediainfo=False)
-            all_profiles.extend(profiles)
+            # No video files found, fallback
+            mp = _analyze_by_filename(torrent)
+            if mp:
+                all_profiles.append(mp)
             continue
 
         if is_collection:
-            # 合集种子：每个文件单独分析
+            # Collection: analyze each video file as a separate movie
             for vf in video_files:
-                mp = _analyze_single_file(torrent, vf)
+                mp = _analyze_single_video_file(torrent, vf, mount_point, save_path)
                 if mp:
                     mp.is_collection = True
                     mp.collection_name = seed_name
                     all_profiles.append(mp)
         else:
-            # 单个电影：取最大的视频文件分析
-            best_vf = max(video_files, key=lambda x: x["size"])
-            mp = _analyze_single_file(torrent, best_vf)
+            # Single movie: analyze the largest video file
+            best_vf = max(video_files, key=lambda x: x.get("size", 0))
+            mp = _analyze_single_video_file(torrent, best_vf, mount_point, save_path)
             if mp:
                 all_profiles.append(mp)
 
@@ -441,27 +360,55 @@ def analyze_with_mediainfo(
     return all_profiles
 
 
-def _analyze_single_file(torrent: dict, vf: dict) -> Optional[MediaProfile]:
-    """分析单个视频文件（文件名解析 + MediaInfo）。"""
-    full_path = vf["full_path"]
-    file_name = os.path.basename(full_path)
-    file_name_noext = os.path.splitext(file_name)[0]
+def _analyze_single_video_file(torrent: dict, vf: dict, mount_point: str, save_path: str) -> Optional[MediaProfile]:
+    """Analyze a single video file with MediaInfo."""
+    hash_val = torrent.get("hash", "")
+    seed_name = torrent.get("name", "")
+    category = torrent.get("category", "")
 
-    # 文件名解析
+    # File path on SMB
+    # qB file "name" is relative to save_path/torrent_name
+    # e.g. "Casino.Royale.2006/Casino.Royale.2006.mkv" or just "movie.mkv"
+    file_rel_path = vf.get("name", "")
+    
+    # Build SMB path: mount_point + save_path_without_prefix + file_rel_path
+    prefix = config.get("qb_download_prefix")
+    if save_path.startswith(prefix):
+        relative = save_path[len(prefix):].lstrip("/")
+    else:
+        relative = save_path.lstrip("/")
+    
+    # If file_rel_path already starts with torrent name, don't add it again
+    full_path = os.path.join(mount_point, relative, file_rel_path)
+
+    file_name = os.path.basename(file_rel_path)
+    file_name_noext = os.path.splitext(file_name)[0]
+    file_size = vf.get("size", 0)
+
+    # Parse filename for title/year
     parsed = parse_filename(file_name_noext)
+    title = parsed.get("guess_title", "") or parsed.get("chinese_title", "") or file_name_noext
+    year = parsed.get("year", "")
+
+    # If title is empty or just the filename, try parsing torrent name
+    if not title or title == file_name_noext or len(title) < 3:
+        parsed2 = parse_filename(seed_name)
+        title = parsed2.get("guess_title", "") or parsed2.get("chinese_title", "") or file_name_noext
+        if not year and parsed2.get("year"):
+            year = parsed2.get("year")
 
     mp = MediaProfile(
-        torrent_hash=torrent.get("hash", ""),
-        file_index=vf["index"],
+        torrent_hash=hash_val,
+        file_index=vf.get("index", 0),
         file_path=full_path,
-        file_size=vf["size"],
-        title=parsed.get("title", file_name_noext),
-        year=parsed.get("year", ""),
-        torrent_name=torrent.get("name", ""),
-        category=torrent.get("category", ""),
+        file_size=file_size,
+        title=title,
+        year=year,
+        torrent_name=seed_name,
+        category=category,
     )
 
-    # 来源 / 分辨率（文件名）
+    # Source / Resolution from filename
     mp.source = _guess_source_from_filename(file_name_noext)
     mp.source_detail = {
         "bluray": "BluRay",
@@ -475,7 +422,7 @@ def _analyze_single_file(torrent: dict, vf: dict) -> Optional[MediaProfile]:
         "other": parsed.get("screen_size", "未知"),
     }.get(mp.resolution, "未知")
 
-    # 检查缓存
+    # Check cache
     try:
         stat = os.stat(full_path)
         cached = _read_cache(full_path, stat.st_size, stat.st_mtime)
@@ -491,33 +438,30 @@ def _analyze_single_file(torrent: dict, vf: dict) -> Optional[MediaProfile]:
         mp.hdr_detail = cached.get("hdr_detail", "")
         return mp
 
-    # 运行 MediaInfo
+    # Run MediaInfo
     mi_data = _run_mediainfo(full_path)
     if not mi_data:
-        # MediaInfo 失败，用文件名猜测
+        # MediaInfo failed, use filename fallback
         mp.hdr_level = _guess_hdr_from_filename(file_name_noext)
-        mp.hdr_detail = {"dv_p7": "Dolby Vision P7", "dv_p8": "Dolby Vision P8",
-                         "dv_p5": "Dolby Vision P5", "hdr10plus": "HDR10+",
-                         "hdr10": "HDR10", "sdr": "SDR"}.get(mp.hdr_level, "SDR")
+        mp.hdr_detail = {
+            "dv_p7": "Dolby Vision P7", "dv_p8": "Dolby Vision P8",
+            "dv_p5": "Dolby Vision P5", "hdr10plus": "HDR10+",
+            "hdr10": "HDR10", "sdr": "SDR",
+        }.get(mp.hdr_level, "SDR")
         return mp
 
-    # 解析 MediaInfo JSON
+    # Parse MediaInfo JSON
     try:
         tracks = mi_data.get("media", {}).get("track", [])
         video_tracks = [t for t in tracks if t.get("@type") == "Video"]
         audio_tracks = [t for t in tracks if t.get("@type") == "Audio"]
         text_tracks = [t for t in tracks if t.get("@type") == "Text"]
 
-        # HDR
         mp.hdr_level, mp.hdr_detail = _detect_hdr_level(video_tracks)
-
-        # 音轨
         mp.audio_level, mp.audio_detail = _detect_audio_level(audio_tracks)
-
-        # 字幕
         mp.subtitle_level, mp.subtitle_detail = _detect_subtitle_level(text_tracks)
 
-        # 写入缓存
+        # Write cache
         try:
             stat = os.stat(full_path)
             _write_cache(full_path, stat.st_size, stat.st_mtime, {
@@ -536,25 +480,59 @@ def _analyze_single_file(torrent: dict, vf: dict) -> Optional[MediaProfile]:
     return mp
 
 
+def _analyze_by_filename(torrent: dict) -> Optional[MediaProfile]:
+    """Fallback: analyze using only filename (no MediaInfo)."""
+    seed_name = torrent.get("name", "")
+    parsed = parse_filename(seed_name)
+
+    mp = MediaProfile(
+        torrent_hash=torrent.get("hash", ""),
+        file_index=0,
+        file_path="",
+        file_size=torrent.get("size", 0),
+        title=parsed.get("guess_title", "") or parsed.get("chinese_title", "") or seed_name,
+        year=parsed.get("year", ""),
+        torrent_name=seed_name,
+        category=torrent.get("category", ""),
+    )
+
+    mp.source = _guess_source_from_filename(seed_name)
+    mp.source_detail = {
+        "bluray": "BluRay", "webdl": "WEB-DL", "other": parsed.get("source", "未知"),
+    }.get(mp.source, "未知")
+    mp.resolution = _guess_resolution_from_filename(seed_name)
+    mp.resolution_detail = {
+        "2160p": "4K", "1080p": "1080p", "other": parsed.get("screen_size", "未知"),
+    }.get(mp.resolution, "未知")
+    mp.hdr_level = _guess_hdr_from_filename(seed_name)
+    mp.hdr_detail = {
+        "dv_p7": "Dolby Vision P7", "dv_p8": "Dolby Vision P8",
+        "dv_p5": "Dolby Vision P5", "hdr10plus": "HDR10+",
+        "hdr10": "HDR10", "sdr": "SDR",
+    }.get(mp.hdr_level, "SDR")
+
+    return mp
+
+
 def _analyze_filename_only(
     torrents: list[dict],
     progress_callback=None,
 ) -> list[MediaProfile]:
-    """仅使用文件名解析（无 MediaInfo），作为降级方案。"""
+    """Fallback when SMB is unavailable."""
     all_profiles = []
     total = len(torrents)
     for idx, torrent in enumerate(torrents):
         if progress_callback:
             progress_callback(idx, total, torrent.get("name", ""))
-        profiles = analyze_torrent(torrent, use_mediainfo=False)
-        all_profiles.extend(profiles)
+        mp = _analyze_by_filename(torrent)
+        if mp:
+            all_profiles.append(mp)
     if progress_callback:
         progress_callback(total, total, "分析完成")
     return all_profiles
 
 
 def unmount_smb():
-    """卸载 SMB 挂载。"""
     mount_point = config.get("smb_mount_point")
     if os.path.ismount(mount_point):
         try:

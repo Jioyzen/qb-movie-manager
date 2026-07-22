@@ -1,10 +1,11 @@
-"""Dedup Engine - 去重决策引擎。
+"""Dedup Engine - deduplication decision engine.
 
-按 TMDB ID 或 (title+year) 对 MediaProfile 分组，
-五层优先级链排序，标记保留/删除。
+Groups by TMDB ID (primary) or (title, year) fallback,
+then applies 5-layer priority chain to select one keeper per movie.
 """
 
 import json
+import re
 from collections import defaultdict
 from typing import Optional
 
@@ -12,74 +13,69 @@ from scoring_engine import MediaProfile, rank_profiles
 from config import config
 
 
-@staticmethod
 def _normalize_title(title: str) -> str:
-    """标准化标题用于分组。"""
-    import re
-    # 去特殊字符、空格
-    t = re.sub(r"[^\w\u4e00-\u9fff\s]", "", title).strip().lower()
-    # 去多余空格
-    t = re.sub(r"\s+", " ", t)
+    if not title:
+        return ""
+    # Remove quality markers and common noise
+    t = re.sub(r'\[.*?\]', '', title)
+    t = re.sub(r'\(.*?\)', '', t)
+    t = re.sub(
+        r'(bluray|web[\s\-]?dl|webrip|2160p|1080p|720p|4k|uhd|hdr|dv|'
+        r'dovi|x265|x264|hevc|av1|aac|dts|ddp|ac3|truehd|atmos|'
+        r'\d+audios|mUHD|FRDS|CMCT|CMCTV|MNHD|ADE|tinyAV|hq|sphd)',
+        '', t, flags=re.I
+    )
+    t = re.sub(r'[._\-]', ' ', t)
+    t = re.sub(r'\s+', ' ', t).strip().lower()
     return t
 
 
 class DedupResult:
-    """一个去重组的结果。"""
+    """Result for one deduplication group."""
 
-    def __init__(self, group_key: str, profiles: list[MediaProfile], collection_strategy: str):
+    def __init__(self, group_key: str, profiles: list[MediaProfile],
+                 collection_strategy: str,
+                 tmdb_title_cn: str = "", tmdb_title_en: str = ""):
         self.group_key = group_key
         self.profiles = profiles
         self.collection_strategy = collection_strategy
+        self.tmdb_title_cn = tmdb_title_cn
+        self.tmdb_title_en = tmdb_title_en
         self._decide()
 
     def _decide(self):
-        """执行去重决策。"""
         strategy = self.collection_strategy
         profiles = self.profiles
-
         if len(profiles) <= 1:
-            # 单条记录，直接保留
             for p in profiles:
                 p._keep = True
             return
 
-        # 按策略处理合集
         has_collection = any(p.is_collection for p in profiles)
 
         if has_collection and strategy == "skip":
-            # 跳过合集：所有合集种子标记保留，只处理独立种子之间的重复
-            collection_profiles = [p for p in profiles if p.is_collection]
-            standalone_profiles = [p for p in profiles if not p.is_collection]
-
-            for p in collection_profiles:
+            coll = [p for p in profiles if p.is_collection]
+            alone = [p for p in profiles if not p.is_collection]
+            for p in coll:
                 p._keep = True
-
-            if len(standalone_profiles) <= 1:
-                for p in standalone_profiles:
+            if len(alone) <= 1:
+                for p in alone:
                     p._keep = True
             else:
-                ranked = rank_profiles(standalone_profiles)
+                ranked = rank_profiles(alone)
                 ranked[0]._keep = True
                 for p in ranked[1:]:
                     p._keep = False
-
         elif has_collection and strategy == "prefer":
-            # 合集优先：有合集时直接保留合集版本，删除独立种子
-            collection_profiles = [p for p in profiles if p.is_collection]
-            standalone_profiles = [p for p in profiles if not p.is_collection]
-
-            # 合集之间比较，保留最好的
-            ranked_collection = rank_profiles(collection_profiles)
-            ranked_collection[0]._keep = True
-            for p in ranked_collection[1:]:
+            coll = [p for p in profiles if p.is_collection]
+            alone = [p for p in profiles if not p.is_collection]
+            ranked_coll = rank_profiles(coll)
+            ranked_coll[0]._keep = True
+            for p in ranked_coll[1:]:
                 p._keep = False
-
-            # 独立种子全部删除
-            for p in standalone_profiles:
+            for p in alone:
                 p._keep = False
-
         else:
-            # 没有合集，或策略不涉及合集：正常排序
             ranked = rank_profiles(profiles)
             ranked[0]._keep = True
             for p in ranked[1:]:
@@ -87,7 +83,6 @@ class DedupResult:
 
     @property
     def keep_profile(self) -> Optional[MediaProfile]:
-        """返回被保留的 MediaProfile。"""
         for p in self.profiles:
             if getattr(p, "_keep", True):
                 return p
@@ -95,12 +90,13 @@ class DedupResult:
 
     @property
     def delete_profiles(self) -> list[MediaProfile]:
-        """返回被标记为删除的 MediaProfile 列表。"""
         return [p for p in self.profiles if not getattr(p, "_keep", True)]
 
     def to_dict(self) -> dict:
         return {
             "group_key": self.group_key,
+            "tmdb_title_cn": self.tmdb_title_cn,
+            "tmdb_title_en": self.tmdb_title_en,
             "keep": self.keep_profile.to_dict() if self.keep_profile else None,
             "delete": [p.to_dict() for p in self.delete_profiles],
             "total": len(self.profiles),
@@ -109,42 +105,60 @@ class DedupResult:
 
 
 class DedupEngine:
-    """去重引擎主类。"""
-
-    def __init__(self, profiles: list[MediaProfile]):
+    def __init__(self, profiles: list[MediaProfile], tmdb_matches: list[dict] = None):
         self.profiles = profiles
+        self.tmdb_matches = tmdb_matches or []
+        # Build lookup: torrent_hash -> tmdb_match
+        self._tmdb_lookup = {m["torrent_hash"]: m for m in self.tmdb_matches if m.get("tmdb_id")}
         self.groups: list[DedupResult] = []
         self._group()
 
     def _group(self):
-        """按 TMDB ID 或 (title+year) 分组。"""
+        """Group by TMDB ID first, then fallback to (title, year)."""
         groups = defaultdict(list)
+        # Track which TMDB ID each group has
+        group_tmdb_info = {}
 
         for p in self.profiles:
-            key = _normalize_title(p.title)
-            if p.year:
-                key = f"{key}|{p.year}"
+            tmdb_match = self._tmdb_lookup.get(p.torrent_hash)
+
+            if tmdb_match and tmdb_match.get("tmdb_id"):
+                key = f"tmdb:{tmdb_match['tmdb_id']}"
+                # Store TMDB title info
+                if key not in group_tmdb_info:
+                    group_tmdb_info[key] = {
+                        "cn": tmdb_match.get("tmdb_title_cn", ""),
+                        "en": tmdb_match.get("tmdb_title_en", ""),
+                    }
+            else:
+                # Fallback: title + year
+                key = _normalize_title(p.title)
+                if p.year:
+                    key = f"{key}|{p.year}"
+                if not key:
+                    key = p.torrent_hash
+
             groups[key].append(p)
 
         strategy = config.get("collection_strategy", "skip")
-
         self.groups = []
         for key, members in groups.items():
-            self.groups.append(DedupResult(key, members, strategy))
+            info = group_tmdb_info.get(key, {"cn": "", "en": ""})
+            self.groups.append(DedupResult(
+                key, members, strategy,
+                tmdb_title_cn=info["cn"],
+                tmdb_title_en=info["en"],
+            ))
 
-        # 按标题排序
         self.groups.sort(key=lambda g: g.group_key)
 
     def get_duplicates(self) -> list[DedupResult]:
-        """返回有重复的组（至少 2 个版本）。"""
         return [g for g in self.groups if len(g.profiles) > 1]
 
     def get_summary(self) -> dict:
-        """返回去重摘要。"""
         dup_groups = self.get_duplicates()
         total_delete = sum(len(g.delete_profiles) for g in dup_groups)
         total_keep = sum(1 for g in dup_groups if g.keep_profile)
-
         return {
             "total_profiles": len(self.profiles),
             "total_groups": len(self.groups),
@@ -154,5 +168,4 @@ class DedupEngine:
         }
 
     def to_dict(self) -> list[dict]:
-        """返回所有去重组（含无重复的单条）。"""
         return [g.to_dict() for g in self.groups]
