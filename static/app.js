@@ -38,17 +38,19 @@ const startPolling = () => {
       document.querySelectorAll('.progress-bar').forEach(e => e.style.display = 'none');
       await refreshCurrentStep();
     }
-  }, 1500);
+  }, 1000);
 };
 
 const refreshCurrentStep = async () => {
+  // 拉取最新数据
   switch (state.step) {
-    case 1: { const d = await api('/api/torrents'); if (d) state.torrents = d.torrents; renderFetch(); break; }
-    case 2: { const d = await api('/api/tmdb/results'); if (d) state.matches = d.matches; renderTmdb(); break; }
-    case 3: { const d = await api('/api/analyze/profiles'); if (d) state.profiles = d.profiles; renderAnalyze(); break; }
-    case 4: { const d = await api('/api/dedup/results'); if (d) { state.dedup = d.groups; state.overview = d.summary; } renderDedup(); break; }
-    case 5: renderCleanup(); break;
+    case 1: { const d = await api('/api/torrents'); if (d) state.torrents = d.torrents; break; }
+    case 2: { const d = await api('/api/tmdb/results'); if (d) state.matches = d.matches; break; }
+    case 3: { const d = await api('/api/analyze/profiles'); if (d) state.profiles = d.profiles; break; }
+    case 4: { const d = await api('/api/dedup/results'); if (d) { state.dedup = d.groups; state.overview = d.summary; } break; }
   }
+  // 用 renderContent 重新渲染（自动传入正确的 container）
+  renderContent();
 };
 
 window.switchStep = async (idx) => {
