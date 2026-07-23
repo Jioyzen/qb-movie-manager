@@ -265,7 +265,7 @@ const renderFetch = (container) => {
         <div class="label">${state.collectionFilter ? '▼ 合集（点击显示全部）' : '合集'}</div>
       </div>
     </div>
-    <div class="card" style="max-height:500px;overflow-y:auto">
+    <div class="card" style="max-height:500px;overflow-y:auto;position:relative;isolation:isolate">
       ${state.collectionFilter ? '<div style="padding:8px 0;font-size:12px;color:#d29922">仅显示合集种子（共 ' + collCount + ' 个）</div>' : ''}
       <table><thead><tr><th style="min-width:350px">名称</th><th>分类</th><th>大小</th><th>类型</th></tr></thead>
       <tbody>${filtered.map(t => `<tr><td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${t.name}">${t.name}</td><td><span class="tag tag-blue">${t.category}</span></td><td>${fmtSize(t.size)}</td><td>${t.is_collection ? '<span class="tag tag-gold">合集</span>' : '<span class="tag tag-gray">单集</span>'}</td></tr>`).join('')}</tbody>
@@ -333,7 +333,7 @@ const renderTmdb = (container) => {
       </div>
       <div class="stat-card"><div class="num" style="color:#d29922">${protected}</div><div class="label">合集保护</div></div>
     </div>
-    <div class="card" style="max-height:600px;overflow-y:auto">
+    <div class="card" style="max-height:600px;overflow-y:auto;position:relative;isolation:isolate">
       ${state.tmdbFilter ? '<div style="padding:8px 0;font-size:12px;color:#f85149">仅显示未匹配种子，可手动填写 TMDB ID</div>' : ''}
       <table><thead><tr><th>状态</th><th style="min-width:350px">种子名</th><th>TMDB ID</th><th>中文名</th><th>年代</th></tr></thead>
       <tbody id="tmdb-tbody">${filtered.map(m => {
