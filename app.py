@@ -91,8 +91,9 @@ def _progress_callback(current: int, total: int, message: str):
 
 
 def _update_collection_flags(torrents: list[dict]):
-    """通过 qBittorrent 文件列表判断每个种子是否为合集（>=2个视频文件）。"""
+    """通过 qBittorrent 文件列表判断每个种子是否为合集（>=2个不同视频文件）。"""
     import requests as req
+    import re as _re
     qb_url = config.qb_url
     username = config.get("qb_username")
     password = config.get("qb_password")
@@ -105,6 +106,26 @@ def _update_collection_flags(torrents: list[dict]):
     except Exception:
         return
 
+    def _is_extras(fname: str) -> bool:
+        """排除花絮、删减片段、Sample 等非正片文件。"""
+        n = fname.lower()
+        return any(kw in n for kw in ['删减', 'deleted.scene', 'deleted_scene', 'extra', 'sample',
+                                       'trailer', 'featurette', 'behind.the.scenes', 'making.of',
+                                       'interview', 'bts', 'short', '预告', '花絮', '拍摄花絮'])
+
+    def _is_multi_part(names: list[str]) -> bool:
+        """2-4 个视频文件且共享相同前缀 → 分卷电影，非合集。"""
+        if len(names) < 2 or len(names) > 4:
+            return False
+        stripped = set()
+        for n in names:
+            s = _re.sub(r'[.\s_-]*(part|pt|cd|disc)[.\s_-]*\d+.*', '', n, flags=_re.I)
+            s = _re.sub(r'[.\s_-]*[ⅠⅡⅢⅣⅤⅥ]', '', s)
+            # 去掉 .mkv 后缀后的文件名
+            s = _re.sub(r'\.\w+$', '', s.strip().lower())
+            stripped.add(s)
+        return len(stripped) == 1
+
     flags = {}
     for t in torrents:
         h = t.get("hash", "")
@@ -116,11 +137,17 @@ def _update_collection_flags(torrents: list[dict]):
             if r.status_code != 200:
                 continue
             files = r.json()
-            # 统计视频文件数量（跳过小文件）
-            video_count = sum(1 for f in files
-                              if f.get("name", "").lower().endswith((".mkv", ".mp4", ".avi", ".ts", ".m2ts", ".mov"))
-                              and f.get("size", 0) >= min_size)
-            flags[h] = video_count >= 2
+            # 筛选视频文件（排除小文件和花絮）
+            video_files = [f for f in files
+                           if f.get("name", "").lower().endswith((".mkv", ".mp4", ".avi", ".ts", ".m2ts", ".mov"))
+                           and f.get("size", 0) >= min_size
+                           and not _is_extras(f.get("name", ""))]
+            # 2+ 个视频文件且不是同一部电影的分卷 → 合集
+            if len(video_files) >= 2:
+                names = [f.get("name", "") for f in video_files]
+                flags[h] = not _is_multi_part(names)
+            else:
+                flags[h] = False
         except Exception:
             continue
 
