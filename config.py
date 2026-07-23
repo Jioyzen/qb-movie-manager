@@ -15,7 +15,7 @@ DEFAULTS = {
     "qb_password": "zz0770",
     # TMDB
     "tmdb_api_key": "f71a029311ca7a272c05c7d217bb5c5b",
-    "tmdb_rate_limit": 0.3,
+    "tmdb_rate_limit": 0.2,
     "tmdb_workers": 1,
     # Filter
     "categories": ["4K电影", "高清电影"],

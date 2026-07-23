@@ -171,6 +171,52 @@ def api_test_smb():
             pass
 
 
+@app.route("/api/config/verify", methods=["POST"])
+def api_verify_config():
+    """Verify all config: SMB mount + TMDB API key."""
+    import subprocess, os
+    smb_host = config.get("smb_host")
+    smb_share = config.get("smb_share")
+    username = config.get("smb_username")
+    password = config.get("smb_password")
+    mount_point = config.get("smb_mount_point")
+    api_key = config.get("tmdb_api_key")
+
+    issues = []
+
+    # 1. Test SMB mount
+    os.makedirs(mount_point, exist_ok=True)
+    try:
+        r = subprocess.run(["sudo", "mount", "-t", "cifs",
+            f"//{smb_host}/{smb_share}", mount_point,
+            "-o", f"username={username},password={password},iocharset=utf8,file_mode=0755,dir_mode=0755,noexec,nosuid,nodev"],
+            capture_output=True, text=True, timeout=15)
+        if r.returncode != 0:
+            issues.append(f"SMB 挂载失败: {r.stderr.strip()}")
+        elif not os.path.ismount(mount_point):
+            issues.append("SMB 挂载失败，请检查地址和认证信息")
+        else:
+            # Unmount
+            subprocess.run(["sudo", "umount", mount_point], capture_output=True, timeout=10)
+    except Exception as e:
+        issues.append(f"SMB 测试异常: {e}")
+
+    # 2. Check TMDB key
+    if not api_key or len(api_key) < 10:
+        issues.append("TMDB API Key 无效")
+
+    # 3. Check categories
+    cats = config.get("categories", [])
+    if not cats:
+        issues.append("请至少选择一个分类")
+
+    return jsonify({
+        "status": "ok" if not issues else "error",
+        "issues": issues,
+        "message": "配置验证通过" if not issues else "；".join(issues),
+    })
+
+
 # ─── 种子 API ───────────────────────────────────────────────
 
 @app.route("/api/categories", methods=["GET"])
