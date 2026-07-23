@@ -480,6 +480,20 @@ def api_get_status():
         })
 
 
+@app.route("/api/reset", methods=["POST"])
+def api_reset():
+    """Clear all cached data. Called on page refresh."""
+    with _task_state["lock"]:
+        _task_state["torrents"] = []
+        _task_state["tmdb_matches"] = []
+        _task_state["profiles"] = []
+        _task_state["dedup_results"] = []
+        _task_state["running"] = False
+        _task_state["current_step"] = ""
+        _task_state["progress"] = {"current": 0, "total": 0, "message": ""}
+    return jsonify({"status": "ok"})
+
+
 # ─── 前端入口 ───────────────────────────────────────────────
 
 @app.route("/")

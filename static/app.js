@@ -513,8 +513,18 @@ window.confirmDelete = async () => {
 };
 
 // ═══════════════════════════════════════════════════════════════
-// 初始化 - 从空白状态开始
+// 初始化 - 重置缓存，恢复上次步骤
 // ═══════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', async () => {
-  switchStep(0);
+  // 清除服务端缓存数据
+  await api('/api/reset', { method: 'POST' });
+  // 从 sessionStorage 恢复上一次的步骤
+  const savedStep = parseInt(sessionStorage.getItem('qb_step') || '0');
+  switchStep(Math.min(savedStep, 5));
+  // 切换步骤时保存到 sessionStorage
+  const origSwitch = window.switchStep;
+  window.switchStep = async (idx) => {
+    sessionStorage.setItem('qb_step', String(idx));
+    return origSwitch(idx);
+  };
 });
