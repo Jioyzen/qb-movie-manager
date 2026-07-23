@@ -435,7 +435,7 @@ def api_tmdb_match():
 def api_tmdb_results():
     with _task_state["lock"]:
         matches = list(_task_state["tmdb_matches"])
-    matched = sum(1 for m in matches if m.get("tmdb_id"))
+    matched = sum(1 for m in matches if m.get("tmdb_id") and not m.get("tmdb_id", "").startswith("protected:"))
     return jsonify({
         "status": "ok",
         "matches": matches,
@@ -443,6 +443,29 @@ def api_tmdb_results():
         "matched": matched,
         "unmatched": len(matches) - matched,
     })
+
+
+@app.route("/api/tmdb/update", methods=["POST"])
+def api_tmdb_update():
+    """手动更新某个种子的 TMDB 匹配结果。"""
+    data = request.get_json(silent=True) or {}
+    torrent_hash = data.get("torrent_hash", "")
+    tmdb_id = data.get("tmdb_id", "")
+    tmdb_title_cn = data.get("tmdb_title_cn", "")
+    tmdb_title_en = data.get("tmdb_title_en", "")
+
+    if not torrent_hash or not tmdb_id:
+        return jsonify({"status": "error", "error": "参数不完整"}), 400
+
+    with _task_state["lock"]:
+        for m in _task_state["tmdb_matches"]:
+            if m.get("torrent_hash") == torrent_hash:
+                m["tmdb_id"] = tmdb_id
+                m["tmdb_title_cn"] = tmdb_title_cn or m.get("parsed_title", "")
+                m["tmdb_title_en"] = tmdb_title_en or m.get("parsed_title", "")
+                break
+
+    return jsonify({"status": "ok", "message": f"已更新 {torrent_hash[:16]} -> TMDB ID {tmdb_id}"})
 
 
 # ─── 深度分析 API ───────────────────────────────────────────

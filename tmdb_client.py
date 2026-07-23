@@ -75,6 +75,10 @@ class TMDBClient:
         """Search TMDB and return (id, cn_title, en_title)."""
         if not query or not self._api_key:
             return None, "", ""
+        # Normalize: strip Roman numerals, version markers
+        query = self._normalize_query(query)
+        if not query:
+            return None, "", ""
         self._rate_limit()
         resp = self._request(query, year=year, language=language)
         if resp is None:
@@ -86,9 +90,26 @@ class TMDBClient:
         return self._pick_best(results, query, year)
 
     def _has_meaningful_chinese(self, text: str) -> bool:
-        """Check if text contains meaningful Chinese (>=3 Chinese chars)."""
+        """Check if text contains meaningful Chinese (>=2 Chinese chars)."""
         cn = "".join(c for c in text if "\u4e00" <= c <= "\u9fff")
-        return len(cn) >= 3
+        return len(cn) >= 2
+
+    @staticmethod
+    def _normalize_query(query: str) -> str:
+        """Clean up query for TMDB search: strip Roman numerals, noise words."""
+        import re
+        q = query
+        # Replace Roman numerals with Arabic equivalents
+        roman_map = {"Ⅱ": "2", "Ⅲ": "3", "Ⅳ": "4", "Ⅴ": "5", "Ⅵ": "6",
+                     "Ⅶ": "7", "Ⅷ": "8", "Ⅸ": "9", "Ⅹ": "10",
+                     "Ⅰ": "1", "II": "2", "III": "3", "IV": "4", "VI": "6"}
+        for k, v in roman_map.items():
+            q = q.replace(k, v)
+        # Remove version markers like V2, Repack, etc.
+        q = re.sub(r'\b(V\d+|REPACK|PROPER|EXTENDED|DIRECTORS?\.?CUT|UNRATED|REMUX)\b', '', q, flags=re.I)
+        # Remove extra spaces
+        q = re.sub(r'\s+', ' ', q).strip()
+        return q
 
     def match_entry(self, filename, guess_title, guess_year):
         """Multi-strategy TMDB match for one entry.

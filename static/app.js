@@ -1,6 +1,6 @@
 /* ─── QB 影视管理工具 v2.1 - SPA ─────────────────────────────── */
 const state = { step: 0, torrents: [], matches: [], profiles: [], dedup: [], overview: null,
-  config: null, busy: false, pollTimer: null, keepOverrides: {}, qbCategories: [], collectionFilter: false };
+  config: null, busy: false, pollTimer: null, keepOverrides: {}, qbCategories: [], collectionFilter: false, tmdbFilter: false };
 
 const api = async (url, opts = {}) => {
   try { const r = await fetch(url, { headers: { 'Content-Type': 'application/json', ...opts.headers }, ...opts }); return await r.json(); }
@@ -250,9 +250,10 @@ window.fetchTorrents = async () => {
 // Step 2: TMDB 匹配
 // ═══════════════════════════════════════════════════════════════
 const renderTmdb = (container) => {
-  const matched = state.matches.filter(m => m.tmdb_id).length;
+  const matched = state.matches.filter(m => m.tmdb_id && !m.tmdb_id.startsWith('protected:')).length;
   const total = state.matches.length;
   const hasData = total > 0;
+  const filtered = state.tmdbFilter ? state.matches.filter(m => !m.tmdb_id || m.tmdb_id === '') : state.matches;
   container.innerHTML = `
     <h2>🏷️ TMDB 匹配</h2>
     <p class="desc">从种子名称提取电影名和年份，匹配 TMDB 获取电影 ID（需等待完成后再进入下一步）</p>
@@ -266,14 +267,46 @@ const renderTmdb = (container) => {
     ${hasData ? `
     <div class="stats-row"><div class="stat-card"><div class="num">${total}</div><div class="label">总种子</div></div>
       <div class="stat-card"><div class="num" style="color:#3fb950">${matched}</div><div class="label">已匹配</div></div>
-      <div class="stat-card"><div class="num" style="color:#f85149">${total - matched}</div><div class="label">未匹配</div></div>
+      <div class="stat-card" style="cursor:pointer" onclick="toggleTmdbFilter()">
+        <div class="num" style="color:${state.tmdbFilter ? '#f85149' : '#8b949e'}">${total - matched}</div>
+        <div class="label">${state.tmdbFilter ? '▼ 未匹配（点击显示全部）' : '未匹配'}</div>
+      </div>
     </div>
     <div class="card" style="max-height:500px;overflow-y:auto">
+      ${state.tmdbFilter ? '<div style="padding:8px 0;font-size:12px;color:#f85149">仅显示未匹配种子，可手动填写 TMDB ID</div>' : ''}
       <table><thead><tr><th>种子名</th><th>TMDB ID</th><th>中文名</th><th>英文名</th></tr></thead>
-      <tbody>${state.matches.map(m => `<tr><td title="${m.torrent_name}" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.torrent_name}</td>
-        <td>${m.tmdb_id ? `<span class="tag tag-green">${m.tmdb_id}</span>` : '<span class="tag tag-red">未匹配</span>'}</td>
-        <td>${m.tmdb_title_cn||'-'}</td><td>${m.tmdb_title_en||'-'}</td></tr>`).join('')}</tbody></table>
+      <tbody>${filtered.map(m => `<tr>
+        <td title="${m.torrent_name}" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.torrent_name}</td>
+        <td>${m.tmdb_id && !m.tmdb_id.startsWith('protected:')
+          ? `<span class="tag tag-green">${m.tmdb_id}</span>`
+          : m.tmdb_id && m.tmdb_id.startsWith('protected:')
+            ? '<span class="tag tag-gold">合集保护</span>'
+            : `<div style="display:flex;gap:4px;align-items:center"><input id="mid-${m.torrent_hash}" placeholder="填写ID" style="width:80px;padding:3px 6px;border:1px solid #30363d;border-radius:4px;background:#0d1117;color:#e1e4e8;font-size:12px"><button class="btn btn-sm" onclick="saveManualId('${m.torrent_hash}')">确认</button></div>`}
+        </td>
+        <td>${m.tmdb_title_cn||'-'}</td><td>${m.tmdb_title_en||'-'}</td>
+      </tr>`).join('')}</tbody></table>
     </div>` : ''}`;
+};
+
+window.toggleTmdbFilter = () => {
+  state.tmdbFilter = !state.tmdbFilter;
+  renderTmdb(document.getElementById('content'));
+};
+
+window.saveManualId = async (hash) => {
+  const input = document.getElementById(`mid-${hash}`);
+  const id = input.value.trim();
+  if (!id || !/^\d+$/.test(id)) { showToast('请输入有效的 TMDB ID（数字）', 'error'); return; }
+  const d = await api('/api/tmdb/update', { method: 'POST', body: JSON.stringify({ torrent_hash: hash, tmdb_id: id }) });
+  if (d && d.status === 'ok') {
+    showToast(`✅ ${d.message}`, 'success');
+    // Refresh
+    const r = await api('/api/tmdb/results');
+    if (r) state.matches = r.matches;
+    renderTmdb(document.getElementById('content'));
+  } else {
+    showToast(`❌ ${d?.error || '更新失败'}`, 'error');
+  }
 };
 
 window.startTmdb = async () => {
