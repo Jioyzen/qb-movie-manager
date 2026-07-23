@@ -114,7 +114,7 @@ const renderConfig = async (container) => {
       </div>
     </div>
     <div class="btn-row" style="justify-content:center;margin-top:24px">
-      <button class="btn btn-primary" onclick="verifyAndGo()" id="btn-go" style="font-size:15px;padding:12px 32px">✅ 确认配置，进入下一步获取种子列表</button>
+      <button class="btn btn-primary" onclick="verifyAndGo()" id="btn-go" style="font-size:15px;padding:12px 32px">✅ 保存配置，进入获取种子</button>
       <span id="cfg-verify-r" style="font-size:13px;color:#8b949e;"></span>
     </div>`;
   if (state.qbCategories.length > 0) renderCatCheckboxes();
@@ -511,16 +511,8 @@ window.confirmDelete = async () => {
 };
 
 // ═══════════════════════════════════════════════════════════════
-// 初始化
+// 初始化 - 从空白状态开始
 // ═══════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', async () => {
-  const p = await api('/api/status');
-  if (p) {
-    if (p.running) { state.busy = true; startPolling(); }
-    if (p.has_torrents) { const d = await api('/api/torrents'); if (d) state.torrents = d.torrents; }
-    if (p.has_tmdb) { const d = await api('/api/tmdb/results'); if (d) state.matches = d.matches; }
-    if (p.has_profiles) { const d = await api('/api/analyze/profiles'); if (d) state.profiles = d.profiles; }
-    if (p.has_dedup) { const d = await api('/api/dedup/results'); if (d) { state.dedup = d.groups; state.overview = d.summary; } }
-  }
   switchStep(0);
 });
