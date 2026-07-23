@@ -292,6 +292,7 @@ def api_tmdb_match():
 
     def _run_tmdb():
         client = TMDBClient()
+        collection_strategy = config.get("collection_strategy", "skip")
         total = len(torrents)
         matches = []
         last_report = 0
@@ -301,6 +302,23 @@ def api_tmdb_match():
                 last_report = idx
             try:
                 seed_name = t.get("name", "")
+                is_col = is_collection_seed(seed_name)
+
+                # 跳过合集种子（保护模式）
+                if is_col and collection_strategy == "skip":
+                    matches.append({
+                        "torrent_hash": t.get("hash", ""),
+                        "torrent_name": seed_name,
+                        "category": t.get("category", ""),
+                        "parsed_title": "",
+                        "parsed_year": "",
+                        "tmdb_id": "protected:collection",
+                        "tmdb_title_cn": "合集种子（保护）",
+                        "tmdb_title_en": "Collection (Protected)",
+                        "is_collection": True,
+                    })
+                    continue
+
                 parsed = parse_filename(seed_name)
                 title = parsed.get("guess_title", "") or parsed.get("chinese_title", "")
                 year = parsed.get("year", "")
@@ -322,11 +340,12 @@ def api_tmdb_match():
                 "torrent_hash": t.get("hash", ""),
                 "torrent_name": t.get("name", ""),
                 "category": t.get("category", ""),
-                "parsed_title": title,
-                "parsed_year": year,
-                "tmdb_id": tmdb_id,
-                "tmdb_title_cn": tmdb_title_cn,
-                "tmdb_title_en": tmdb_title_en,
+                "parsed_title": title if 'title' in dir() else "",
+                "parsed_year": year if 'year' in dir() else "",
+                "tmdb_id": tmdb_id if 'tmdb_id' in dir() else "",
+                "tmdb_title_cn": tmdb_title_cn if 'tmdb_title_cn' in dir() else "",
+                "tmdb_title_en": tmdb_title_en if 'tmdb_title_en' in dir() else "",
+                "is_collection": is_col if 'is_col' in dir() else False,
             })
 
         _progress_callback(total, total, f"TMDB 匹配完成，共 {total} 个种子")
@@ -364,10 +383,31 @@ def api_analyze_start():
         return jsonify({"status": "error", "error": "请先获取种子列表"}), 400
 
     def _run_analyze():
+        collection_strategy = config.get("collection_strategy", "skip")
+        # 合集模式下跳过合集种子
+        if collection_strategy == "skip":
+            analyze_list = [t for t in torrents if not is_collection_seed(t.get("name", ""))]
+            collection_list = [t for t in torrents if is_collection_seed(t.get("name", ""))]
+            skipped = len(collection_list)
+            if skipped:
+                print(f"[analyze] 跳过 {skipped} 个合集种子（保护模式）", flush=True)
+        else:
+            analyze_list = torrents
+            collection_list = []
+
         profiles = analyze_torrents(
-            torrents,
+            analyze_list,
             progress_callback=_progress_callback,
         )
+
+        # 为合集种子创建最小 profile（仅文件名分析，无需 SMB/MediaInfo）
+        for t in collection_list:
+            from media_analyzer import _analyze_by_filename
+            mp = _analyze_by_filename(t)
+            if mp:
+                mp.is_collection = True
+                profiles.append(mp)
+
         _progress_callback(len(profiles), len(profiles), f"分析完成，共 {len(profiles)} 个视频文件")
         return profiles
 

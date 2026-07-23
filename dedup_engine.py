@@ -123,7 +123,12 @@ class DedupEngine:
             tmdb_match = self._tmdb_lookup.get(p.torrent_hash)
 
             if tmdb_match and tmdb_match.get("tmdb_id"):
-                key = f"tmdb:{tmdb_match['tmdb_id']}"
+                tmdb_id = tmdb_match["tmdb_id"]
+                # 合集保护：每个合集种子独立分组
+                if tmdb_id.startswith("protected:"):
+                    key = f"collection:{p.torrent_hash}"
+                else:
+                    key = f"tmdb:{tmdb_id}"
                 # Store TMDB title info
                 if key not in group_tmdb_info:
                     group_tmdb_info[key] = {
