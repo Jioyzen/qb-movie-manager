@@ -302,7 +302,7 @@ const renderTmdb = (container) => {
       torrent_hash: t.hash, torrent_name: t.name, category: t.category,
       parsed_title: match.parsed_title || '', parsed_year: match.parsed_year || '',
       tmdb_id: match.tmdb_id || '', tmdb_title_cn: match.tmdb_title_cn || '',
-      tmdb_title_en: match.tmdb_title_en || '', is_collection: t.is_collection,
+      tmdb_title_en: match.tmdb_title_en || '', tmdb_year: match.tmdb_year || '', is_collection: t.is_collection,
     };
   });
   const totalSeeds = displayList.length;
@@ -350,7 +350,7 @@ const renderTmdb = (container) => {
               : `<div style="display:flex;gap:4px;align-items:center"><input id="mid-${m.torrent_hash}" placeholder="填写ID" style="width:80px;padding:3px 6px;border:1px solid #30363d;border-radius:4px;background:#0d1117;color:#e1e4e8;font-size:12px"><button class="btn btn-sm" onclick="saveManualId('${m.torrent_hash}')">确认</button></div>`}
           </td>
           <td>${m.tmdb_title_cn||'-'}</td>
-          <td>${m.parsed_year||m.torrent_name.match(/\b(19\d{2}|20\d{2})\b/)?.[0]||'-'}</td>
+          <td>${m.tmdb_year||m.parsed_year||m.torrent_name.match(/\b(19\d{2}|20\d{2})\b/)?.[0]||'-'}</td>
         </tr>`;
       }).join('')}</tbody></table>
     </div>` : ''}`

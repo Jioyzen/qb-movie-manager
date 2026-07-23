@@ -426,6 +426,7 @@ def api_tmdb_match():
                         tmdb_id = result["tmdb_id"]
                         tmdb_title_cn = result["tmdb_title_cn"]
                         tmdb_title_en = result["tmdb_title_en"]
+                        tmdb_year = result.get("tmdb_year", "")
             except Exception as e:
                 print(f"[tmdb] Error {t.get('name','')[:40]}: {e}", flush=True)
 
@@ -438,6 +439,7 @@ def api_tmdb_match():
                 "tmdb_id": tmdb_id if 'tmdb_id' in dir() else "",
                 "tmdb_title_cn": tmdb_title_cn if 'tmdb_title_cn' in dir() else "",
                 "tmdb_title_en": tmdb_title_en if 'tmdb_title_en' in dir() else "",
+                "tmdb_year": tmdb_year if 'tmdb_year' in dir() else "",
                 "is_collection": is_col if 'is_col' in dir() else False,
             }
             matches.append(entry)
