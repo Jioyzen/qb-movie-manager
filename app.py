@@ -28,9 +28,10 @@ _task_state = {
     "current_step": "",
     "progress": {"current": 0, "total": 0, "message": ""},
     "torrents": [],
-    "tmdb_matches": [],       # [{tmdb_id, title_cn, title_en, torrent_hash, ...}]
+    "tmdb_matches": [],
     "profiles": [],
     "dedup_results": [],
+    "collection_flags": {},  # {torrent_hash: bool} - 文件级合集检测缓存
     "lock": threading.Lock(),
 }
 
@@ -87,6 +88,50 @@ def _store_result(step: str, result):
 def _progress_callback(current: int, total: int, message: str):
     with _task_state["lock"]:
         _task_state["progress"] = {"current": current, "total": total, "message": message}
+
+
+def _update_collection_flags(torrents: list[dict]):
+    """通过 qBittorrent 文件列表判断每个种子是否为合集（>=2个视频文件）。"""
+    import requests as req
+    qb_url = config.qb_url
+    username = config.get("qb_username")
+    password = config.get("qb_password")
+    min_size = config.get("min_file_size_mb", 300) * 1024 * 1024
+
+    try:
+        session = req.Session()
+        session.post(f"{qb_url}/api/v2/auth/login",
+                     data={"username": username, "password": password}, timeout=10)
+    except Exception:
+        return
+
+    flags = {}
+    for t in torrents:
+        h = t.get("hash", "")
+        if not h:
+            continue
+        try:
+            r = session.get(f"{qb_url}/api/v2/torrents/files",
+                            params={"hash": h}, timeout=30)
+            if r.status_code != 200:
+                continue
+            files = r.json()
+            # 统计视频文件数量（跳过小文件）
+            video_count = sum(1 for f in files
+                              if f.get("name", "").lower().endswith((".mkv", ".mp4", ".avi", ".ts", ".m2ts", ".mov"))
+                              and f.get("size", 0) >= min_size)
+            flags[h] = video_count >= 2
+        except Exception:
+            continue
+
+    with _task_state["lock"]:
+        _task_state["collection_flags"] = flags
+
+
+def is_collection(torrent_hash: str) -> bool:
+    """检查当前缓存中该种子是否为合集。"""
+    with _task_state["lock"]:
+        return _task_state["collection_flags"].get(torrent_hash, False)
 
 
 # ─── 配置 API ───────────────────────────────────────────────
@@ -253,6 +298,10 @@ def api_fetch_torrents():
                 seen.add(h)
                 unique.append(t)
         unique.sort(key=lambda x: x.get("name", "").lower())
+
+        # 通过文件数量判断合集
+        _update_collection_flags(unique)
+
         _progress_callback(len(unique), len(unique), f"获取完成，共 {len(unique)} 个种子")
         return unique
 
@@ -272,7 +321,7 @@ def api_get_torrents():
             "category": t.get("category", ""),
             "size": t.get("size", 0),
             "save_path": t.get("save_path", ""),
-            "is_collection": is_collection_seed(t.get("name", "")),
+            "is_collection": is_collection(t.get("hash", "")),
         })
     return jsonify({"status": "ok", "torrents": result, "count": len(result)})
 
@@ -302,7 +351,7 @@ def api_tmdb_match():
                 last_report = idx
             try:
                 seed_name = t.get("name", "")
-                is_col = is_collection_seed(seed_name)
+                is_col = is_collection(t.get("hash", ""))
 
                 # 跳过合集种子（保护模式）
                 if is_col and collection_strategy == "skip":
@@ -386,8 +435,8 @@ def api_analyze_start():
         collection_strategy = config.get("collection_strategy", "skip")
         # 合集模式下跳过合集种子
         if collection_strategy == "skip":
-            analyze_list = [t for t in torrents if not is_collection_seed(t.get("name", ""))]
-            collection_list = [t for t in torrents if is_collection_seed(t.get("name", ""))]
+            analyze_list = [t for t in torrents if not is_collection(t.get("hash", ""))]
+            collection_list = [t for t in torrents if is_collection(t.get("hash", ""))]
             skipped = len(collection_list)
             if skipped:
                 print(f"[analyze] 跳过 {skipped} 个合集种子（保护模式）", flush=True)
@@ -528,6 +577,7 @@ def api_reset():
         _task_state["tmdb_matches"] = []
         _task_state["profiles"] = []
         _task_state["dedup_results"] = []
+        _task_state["collection_flags"] = {}
         _task_state["running"] = False
         _task_state["current_step"] = ""
         _task_state["progress"] = {"current": 0, "total": 0, "message": ""}
