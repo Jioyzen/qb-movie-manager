@@ -1,6 +1,6 @@
 /* ─── QB 影视管理工具 v2.1 - SPA ─────────────────────────────── */
 const state = { step: 0, torrents: [], matches: [], profiles: [], dedup: [], overview: null,
-  config: null, busy: false, pollTimer: null, keepOverrides: {}, qbCategories: [] };
+  config: null, busy: false, pollTimer: null, keepOverrides: {}, qbCategories: [], collectionFilter: false };
 
 const api = async (url, opts = {}) => {
   try { const r = await fetch(url, { headers: { 'Content-Type': 'application/json', ...opts.headers }, ...opts }); return await r.json(); }
@@ -203,7 +203,9 @@ window.verifyAndGo = async () => {
 // ═══════════════════════════════════════════════════════════════
 const renderFetch = (container) => {
   const count = state.torrents.length;
+  const collCount = state.torrents.filter(t => t.is_collection).length;
   const hasData = count > 0;
+  const filtered = state.collectionFilter ? state.torrents.filter(t => t.is_collection) : state.torrents;
   container.innerHTML = `
     <h2>📥 获取种子</h2>
     <p class="desc">从 qBittorrent 拉取种子列表</p>
@@ -214,17 +216,25 @@ const renderFetch = (container) => {
       <div class="progress-bar" style="display:none"><div class="fill" style="width:0%"></div></div>
     </div>
     ${hasData ? `
-    <div class="card"><div class="card-title">结果</div>
-      <div class="stats-row"><div class="stat-card"><div class="num">${count}</div><div class="label">种子总数</div></div>
-        <div class="stat-card"><div class="num" style="color:#d29922">${state.torrents.filter(t => t.is_collection).length}</div><div class="label">合集</div></div>
+    <div class="stats-row"><div class="stat-card"><div class="num">${count}</div><div class="label">种子总数</div></div>
+      <div class="stat-card" style="cursor:pointer" onclick="toggleCollectionFilter()" title="点击查看合集种子">
+        <div class="num" style="color:${state.collectionFilter ? '#d29922' : '#8b949e'}">${collCount}</div>
+        <div class="label">${state.collectionFilter ? '▼ 合集（点击显示全部）' : '合集'}</div>
       </div>
-      <div style="max-height:500px;overflow-y:auto">
-        <table><thead><tr><th>名称</th><th>分类</th><th>大小</th><th>类型</th></tr></thead>
-        <tbody>${state.torrents.map(t => `<tr><td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${t.name}">${t.name}</td><td><span class="tag tag-blue">${t.category}</span></td><td>${fmtSize(t.size)}</td><td>${t.is_collection ? '<span class="tag tag-gold">合集</span>' : '<span class="tag tag-gray">单集</span>'}</td></tr>`).join('')}</tbody>
+    </div>
+    <div class="card" style="max-height:500px;overflow-y:auto">
+      ${state.collectionFilter ? '<div style="padding:8px 0;font-size:12px;color:#d29922">仅显示合集种子（共 ' + collCount + ' 个）</div>' : ''}
+      <table><thead><tr><th>名称</th><th>分类</th><th>大小</th><th>类型</th></tr></thead>
+      <tbody>${filtered.map(t => `<tr><td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${t.name}">${t.name}</td><td><span class="tag tag-blue">${t.category}</span></td><td>${fmtSize(t.size)}</td><td>${t.is_collection ? '<span class="tag tag-gold">合集</span>' : '<span class="tag tag-gray">单集</span>'}</td></tr>`).join('')}</tbody>
         </table>
       </div>
     </div>` : ''}`
   ;
+};
+
+window.toggleCollectionFilter = () => {
+  state.collectionFilter = !state.collectionFilter;
+  renderFetch(document.getElementById('content'));
 };
 
 window.fetchTorrents = async () => {
