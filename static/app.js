@@ -43,9 +43,10 @@ const startPolling = () => {
             renderTmdb(document.getElementById('content'));
           } else if (hadData && live.matches.length > 0) {
             // 已有数据，只更新统计数字和表格行
+            const totalSeeds = state.torrents.length;
+            const prot = state.torrents.filter(t => t.is_collection).length;
+            const toMatch = totalSeeds - prot;
             const matched = live.matches.filter(m => m.tmdb_id && !m.tmdb_id.startsWith('protected:')).length;
-            const prot = live.matches.filter(m => m.tmdb_id && m.tmdb_id.startsWith('protected:')).length;
-            const toMatch = live.matches.length - prot;
             const el = document.getElementById('tmdb-stats');
             if (el) {
               el.innerHTML = `
@@ -292,17 +293,22 @@ window.fetchTorrents = async () => {
 // Step 2: TMDB 匹配
 // ═══════════════════════════════════════════════════════════════
 const renderTmdb = (container) => {
-  const matched = state.matches.filter(m => m.tmdb_id && !m.tmdb_id.startsWith('protected:')).length;
-  const total = state.matches.length;
-  const protected = state.matches.filter(m => m.tmdb_id && m.tmdb_id.startsWith('protected:')).length;
-  // 用种子列表作为待匹配列表的初始数据
-  const displayList = state.matches.length > 0 ? state.matches
-    : state.torrents.map(t => ({
-        torrent_hash: t.hash, torrent_name: t.name, category: t.category,
-        parsed_title: '', parsed_year: '', tmdb_id: '', tmdb_title_cn: '', tmdb_title_en: '',
-        is_collection: t.is_collection,
-      }));
-  const toMatch = displayList.length - protected;
+  // 始终以种子列表为基础，叠加匹配结果
+  const seedMap = {};
+  state.matches.forEach(m => { seedMap[m.torrent_hash] = m; });
+  const displayList = state.torrents.map(t => {
+    const match = seedMap[t.hash] || {};
+    return {
+      torrent_hash: t.hash, torrent_name: t.name, category: t.category,
+      parsed_title: match.parsed_title || '', parsed_year: match.parsed_year || '',
+      tmdb_id: match.tmdb_id || '', tmdb_title_cn: match.tmdb_title_cn || '',
+      tmdb_title_en: match.tmdb_title_en || '', is_collection: t.is_collection,
+    };
+  });
+  const totalSeeds = displayList.length;
+  const protected = displayList.filter(m => m.tmdb_id === 'protected:collection' || m.is_collection).length;
+  const toMatch = totalSeeds - protected;
+  const matched = displayList.filter(m => m.tmdb_id && m.tmdb_id !== 'protected:collection' && m.tmdb_id !== '').length;
   const unmatched = toMatch - matched;
   const hasData = displayList.length > 0;
   const filtered = state.tmdbFilter ? displayList.filter(m => !m.tmdb_id || m.tmdb_id === '') : displayList;
