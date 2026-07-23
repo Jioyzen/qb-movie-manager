@@ -32,12 +32,46 @@ const startPolling = () => {
       const pct = d.progress.total > 0 ? Math.round(d.progress.current / d.progress.total * 100) : 0;
       document.querySelectorAll('.progress-bar .fill').forEach(e => e.style.width = `${pct}%`);
       document.querySelectorAll('.task-status, .progress-text').forEach(e => { if (e) e.textContent = `${d.progress.message} (${pct}%)`; });
-      // TMDB 匹配时实时刷新结果列表
+      // TMDB 匹配时实时刷新
       if (state.step === 2 && d.current_step === 'tmdb') {
         const live = await api('/api/tmdb/live');
         if (live && live.status === 'ok') {
+          const hadData = state.matches.length > 0;
           state.matches = live.matches;
-          renderTmdb(document.getElementById('content'));
+          if (!hadData && live.matches.length > 0) {
+            // 首次有数据，渲染整个页面
+            renderTmdb(document.getElementById('content'));
+          } else if (hadData && live.matches.length > 0) {
+            // 已有数据，只更新统计数字和表格行
+            const matched = live.matches.filter(m => m.tmdb_id && !m.tmdb_id.startsWith('protected:')).length;
+            const prot = live.matches.filter(m => m.tmdb_id && m.tmdb_id.startsWith('protected:')).length;
+            const toMatch = live.matches.length - prot;
+            const el = document.getElementById('tmdb-stats');
+            if (el) {
+              el.innerHTML = `
+                <div class="stat-card"><div class="num">${toMatch}</div><div class="label">需匹配</div></div>
+                <div class="stat-card"><div class="num" style="color:#3fb950">${matched}</div><div class="label">已匹配</div></div>
+                <div class="stat-card"><div class="num" style="color:#8b949e">${toMatch - matched}</div><div class="label">未匹配</div></div>
+                <div class="stat-card"><div class="num" style="color:#d29922">${prot}</div><div class="label">合集保护</div></div>`;
+            }
+            const tbody = document.getElementById('tmdb-tbody');
+            if (tbody) {
+              live.matches.forEach(m => {
+                const row = document.getElementById('row-' + m.torrent_hash);
+                if (row && m.tmdb_id) {
+                  const status = m.tmdb_id.startsWith('protected:') ? '🛡️' : '✅';
+                  const idHtml = m.tmdb_id.startsWith('protected:')
+                    ? '<span class="tag tag-gold">合集保护</span>'
+                    : `<span class="tag tag-green">${m.tmdb_id}</span>`;
+                  row.innerHTML = `<td style="text-align:center;font-size:16px">${status}</td>
+                    <td title="${m.torrent_name}" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.torrent_name}</td>
+                    <td>${idHtml}</td>
+                    <td>${m.tmdb_title_cn||'-'}</td>
+                    <td>${m.tmdb_title_en||'-'}</td>`;
+                }
+              });
+            }
+          }
         }
       }
     } else if (state.busy || d.progress.total > 0) {
@@ -261,10 +295,17 @@ const renderTmdb = (container) => {
   const matched = state.matches.filter(m => m.tmdb_id && !m.tmdb_id.startsWith('protected:')).length;
   const total = state.matches.length;
   const protected = state.matches.filter(m => m.tmdb_id && m.tmdb_id.startsWith('protected:')).length;
-  const toMatch = total - protected;
+  // 用种子列表作为待匹配列表的初始数据
+  const displayList = state.matches.length > 0 ? state.matches
+    : state.torrents.map(t => ({
+        torrent_hash: t.hash, torrent_name: t.name, category: t.category,
+        parsed_title: '', parsed_year: '', tmdb_id: '', tmdb_title_cn: '', tmdb_title_en: '',
+        is_collection: t.is_collection,
+      }));
+  const toMatch = displayList.length - protected;
   const unmatched = toMatch - matched;
-  const hasData = total > 0;
-  const filtered = state.tmdbFilter ? state.matches.filter(m => !m.tmdb_id || m.tmdb_id === '') : state.matches;
+  const hasData = displayList.length > 0;
+  const filtered = state.tmdbFilter ? displayList.filter(m => !m.tmdb_id || m.tmdb_id === '') : displayList;
   container.innerHTML = `
     <h2>🏷️ TMDB 匹配</h2>
     <p class="desc">从种子名称提取电影名和年份，匹配 TMDB 获取电影 ID</p>
@@ -277,7 +318,7 @@ const renderTmdb = (container) => {
       <div class="progress-bar" style="display:none"><div class="fill" style="width:0%"></div></div>
     </div>
     ${hasData ? `
-    <div class="stats-row">
+    <div class="stats-row" id="tmdb-stats">
       <div class="stat-card"><div class="num">${toMatch}</div><div class="label">需匹配</div></div>
       <div class="stat-card"><div class="num" style="color:#3fb950">${matched}</div><div class="label">已匹配</div></div>
       <div class="stat-card" style="cursor:pointer" onclick="toggleTmdbFilter()">
@@ -289,11 +330,11 @@ const renderTmdb = (container) => {
     <div class="card" style="max-height:600px;overflow-y:auto">
       ${state.tmdbFilter ? '<div style="padding:8px 0;font-size:12px;color:#f85149">仅显示未匹配种子，可手动填写 TMDB ID</div>' : ''}
       <table><thead><tr><th>状态</th><th>种子名</th><th>TMDB ID</th><th>中文名</th><th>英文名</th></tr></thead>
-      <tbody>${filtered.map(m => {
+      <tbody id="tmdb-tbody">${filtered.map(m => {
         const status = m.tmdb_id && m.tmdb_id.startsWith('protected:') ? '🛡️'
           : m.tmdb_id ? '✅'
           : state.busy ? '⏳' : '⬜';
-        return `<tr>
+        return `<tr id="row-${m.torrent_hash}">
           <td style="text-align:center;font-size:16px">${status}</td>
           <td title="${m.torrent_name}" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.torrent_name}</td>
           <td>${m.tmdb_id && !m.tmdb_id.startsWith('protected:')
