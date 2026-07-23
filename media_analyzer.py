@@ -21,9 +21,11 @@ from scoring_engine import MediaProfile
 # ─── Collection seed keywords ───────────────────────────────────
 
 COLLECTION_KEYWORDS = re.compile(
-    r"(合集|collection|pack|box.?set|trilogy|series|全集|系列|"
-    r"1-\d{1,2}\s*(film|movie|disc|dvd)|"
-    r"\d{1,2}-Film|Complete|Anthology|Bundle|套装|全集的?)",
+    r"(合集|collection|\bpack\b|box.?set|trilogy|\bseries\b|全集|系列|"
+    r"\b\d{1,2}\s*(film|movie|disc|dvd)\s*(collection|box|pack)?\b|"
+    r"\b\d{1,2}-Film\b|\b\d{1,2}-\d{1,2}\b|"
+    r"\bComplete\s+(Collection|Series|Box|Pack|Set|Bundle)\b|"
+    r"Anthology|Bundle|套装|全集?)",
     re.I,
 )
 
