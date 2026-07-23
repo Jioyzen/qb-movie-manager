@@ -25,13 +25,14 @@ app = Flask(__name__,
 
 _task_state = {
     "running": False,
+    "paused": False,
     "current_step": "",
     "progress": {"current": 0, "total": 0, "message": ""},
     "torrents": [],
     "tmdb_matches": [],
     "profiles": [],
     "dedup_results": [],
-    "collection_flags": {},  # {torrent_hash: bool} - 文件级合集检测缓存
+    "collection_flags": {},
     "lock": threading.Lock(),
 }
 
@@ -371,18 +372,22 @@ def api_tmdb_match():
         collection_strategy = config.get("collection_strategy", "skip")
         total = len(torrents)
         matches = []
-        last_report = 0
         for idx, t in enumerate(torrents):
-            if idx > 0 and idx - last_report >= 10:
+            # 检查暂停
+            while True:
+                with _task_state["lock"]:
+                    if not _task_state["paused"]:
+                        break
+                time.sleep(1)
+
+            if idx > 0 and idx % 10 == 0:
                 _progress_callback(idx, total, f"匹配中 ({idx}/{total})")
-                last_report = idx
             try:
                 seed_name = t.get("name", "")
                 is_col = is_collection(t.get("hash", ""))
 
-                # 跳过合集种子（保护模式）
                 if is_col and collection_strategy == "skip":
-                    matches.append({
+                    entry = {
                         "torrent_hash": t.get("hash", ""),
                         "torrent_name": seed_name,
                         "category": t.get("category", ""),
@@ -392,7 +397,11 @@ def api_tmdb_match():
                         "tmdb_title_cn": "合集种子（保护）",
                         "tmdb_title_en": "Collection (Protected)",
                         "is_collection": True,
-                    })
+                    }
+                    matches.append(entry)
+                    # 实时更新
+                    with _task_state["lock"]:
+                        _task_state["tmdb_matches"] = list(matches)
                     continue
 
                 parsed = parse_filename(seed_name)
@@ -412,7 +421,7 @@ def api_tmdb_match():
             except Exception as e:
                 print(f"[tmdb] Error {t.get('name','')[:40]}: {e}", flush=True)
 
-            matches.append({
+            entry = {
                 "torrent_hash": t.get("hash", ""),
                 "torrent_name": t.get("name", ""),
                 "category": t.get("category", ""),
@@ -422,7 +431,11 @@ def api_tmdb_match():
                 "tmdb_title_cn": tmdb_title_cn if 'tmdb_title_cn' in dir() else "",
                 "tmdb_title_en": tmdb_title_en if 'tmdb_title_en' in dir() else "",
                 "is_collection": is_col if 'is_col' in dir() else False,
-            })
+            }
+            matches.append(entry)
+            # 每匹配一个就实时更新到全局状态
+            with _task_state["lock"]:
+                _task_state["tmdb_matches"] = list(matches)
 
         _progress_callback(total, total, f"TMDB 匹配完成，共 {total} 个种子")
         return matches
@@ -470,6 +483,38 @@ def api_tmdb_update():
                 break
 
     return jsonify({"status": "ok", "message": f"已更新 {torrent_hash[:16]} -> TMDB ID {tmdb_id}"})
+
+
+@app.route("/api/tmdb/pause", methods=["POST"])
+def api_tmdb_pause():
+    """Toggle pause/resume for TMDB matching."""
+    with _task_state["lock"]:
+        _task_state["paused"] = not _task_state["paused"]
+        paused = _task_state["paused"]
+    return jsonify({"status": "ok", "paused": paused})
+
+
+@app.route("/api/tmdb/live", methods=["GET"])
+def api_tmdb_live():
+    """实时返回当前匹配进度和结果。"""
+    with _task_state["lock"]:
+        matches = list(_task_state["tmdb_matches"])
+        running = _task_state["running"]
+        paused = _task_state["paused"]
+        progress = dict(_task_state["progress"])
+    total = len(matches)
+    protected = sum(1 for m in matches if m.get("tmdb_id", "").startswith("protected:"))
+    matched = sum(1 for m in matches if m.get("tmdb_id") and not m.get("tmdb_id", "").startswith("protected:"))
+    return jsonify({
+        "status": "ok",
+        "running": running,
+        "paused": paused,
+        "progress": progress,
+        "matches": matches,
+        "total": total,
+        "matched": matched,
+        "protected": protected,
+    })
 
 
 # ─── 深度分析 API ───────────────────────────────────────────

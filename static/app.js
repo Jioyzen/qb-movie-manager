@@ -32,6 +32,14 @@ const startPolling = () => {
       const pct = d.progress.total > 0 ? Math.round(d.progress.current / d.progress.total * 100) : 0;
       document.querySelectorAll('.progress-bar .fill').forEach(e => e.style.width = `${pct}%`);
       document.querySelectorAll('.task-status, .progress-text').forEach(e => { if (e) e.textContent = `${d.progress.message} (${pct}%)`; });
+      // TMDB 匹配时实时刷新结果列表
+      if (state.step === 2 && d.current_step === 'tmdb') {
+        const live = await api('/api/tmdb/live');
+        if (live && live.status === 'ok') {
+          state.matches = live.matches;
+          renderTmdb(document.getElementById('content'));
+        }
+      }
     } else if (state.busy || d.progress.total > 0) {
       state.busy = false; clearInterval(state.pollTimer); state.pollTimer = null;
       setStatus('就绪');
@@ -259,10 +267,11 @@ const renderTmdb = (container) => {
   const filtered = state.tmdbFilter ? state.matches.filter(m => !m.tmdb_id || m.tmdb_id === '') : state.matches;
   container.innerHTML = `
     <h2>🏷️ TMDB 匹配</h2>
-    <p class="desc">从种子名称提取电影名和年份，匹配 TMDB 获取电影 ID（需等待完成后再进入下一步）</p>
+    <p class="desc">从种子名称提取电影名和年份，匹配 TMDB 获取电影 ID</p>
     <div class="card"><div class="card-title">操作</div>
       <div class="btn-row">
         <button class="btn btn-primary" onclick="startTmdb()" id="btn-tmdb" ${state.torrents.length === 0 ? 'disabled' : ''}>🏷️ 开始匹配</button>
+        <button class="btn" onclick="togglePause()" id="btn-pause" style="display:none">⏸️ 暂停</button>
         <button class="btn" onclick="switchStep(3)" id="btn-next-2" ${hasData ? '' : 'disabled'}>➡️ 进入深度分析</button>
         <span class="task-status" style="font-size:13px;color:#8b949e;"></span></div>
       <div class="progress-bar" style="display:none"><div class="fill" style="width:0%"></div></div>
@@ -277,20 +286,38 @@ const renderTmdb = (container) => {
       </div>
       <div class="stat-card"><div class="num" style="color:#d29922">${protected}</div><div class="label">合集保护</div></div>
     </div>
-    <div class="card" style="max-height:500px;overflow-y:auto">
+    <div class="card" style="max-height:600px;overflow-y:auto">
       ${state.tmdbFilter ? '<div style="padding:8px 0;font-size:12px;color:#f85149">仅显示未匹配种子，可手动填写 TMDB ID</div>' : ''}
-      <table><thead><tr><th>种子名</th><th>TMDB ID</th><th>中文名</th><th>英文名</th></tr></thead>
-      <tbody>${filtered.map(m => `<tr>
-        <td title="${m.torrent_name}" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.torrent_name}</td>
-        <td>${m.tmdb_id && !m.tmdb_id.startsWith('protected:')
-          ? `<span class="tag tag-green">${m.tmdb_id}</span>`
-          : m.tmdb_id && m.tmdb_id.startsWith('protected:')
-            ? '<span class="tag tag-gold">合集保护</span>'
-            : `<div style="display:flex;gap:4px;align-items:center"><input id="mid-${m.torrent_hash}" placeholder="填写ID" style="width:80px;padding:3px 6px;border:1px solid #30363d;border-radius:4px;background:#0d1117;color:#e1e4e8;font-size:12px"><button class="btn btn-sm" onclick="saveManualId('${m.torrent_hash}')">确认</button></div>`}
-        </td>
-        <td>${m.tmdb_title_cn||'-'}</td><td>${m.tmdb_title_en||'-'}</td>
-      </tr>`).join('')}</tbody></table>
-    </div>` : ''}`;
+      <table><thead><tr><th>状态</th><th>种子名</th><th>TMDB ID</th><th>中文名</th><th>英文名</th></tr></thead>
+      <tbody>${filtered.map(m => {
+        const status = m.tmdb_id && m.tmdb_id.startsWith('protected:') ? '🛡️'
+          : m.tmdb_id ? '✅'
+          : state.busy ? '⏳' : '⬜';
+        return `<tr>
+          <td style="text-align:center;font-size:16px">${status}</td>
+          <td title="${m.torrent_name}" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.torrent_name}</td>
+          <td>${m.tmdb_id && !m.tmdb_id.startsWith('protected:')
+            ? `<span class="tag tag-green">${m.tmdb_id}</span>`
+            : m.tmdb_id && m.tmdb_id.startsWith('protected:')
+              ? '<span class="tag tag-gold">合集保护</span>'
+              : `<div style="display:flex;gap:4px;align-items:center"><input id="mid-${m.torrent_hash}" placeholder="填写ID" style="width:80px;padding:3px 6px;border:1px solid #30363d;border-radius:4px;background:#0d1117;color:#e1e4e8;font-size:12px"><button class="btn btn-sm" onclick="saveManualId('${m.torrent_hash}')">确认</button></div>`}
+          </td>
+          <td>${m.tmdb_title_cn||'-'}</td><td>${m.tmdb_title_en||'-'}</td>
+        </tr>`;
+      }).join('')}</tbody></table>
+    </div>` : ''}`
+  ;
+  // 显示暂停按钮（如果正在运行）
+  const bp = document.getElementById('btn-pause');
+  if (bp) bp.style.display = state.busy ? 'inline-flex' : 'none';
+};
+
+window.togglePause = async () => {
+  const d = await api('/api/tmdb/pause', { method: 'POST' });
+  const btn = document.getElementById('btn-pause');
+  if (d && btn) {
+    btn.textContent = d.paused ? '▶️ 继续' : '⏸️ 暂停';
+  }
 };
 
 window.toggleTmdbFilter = () => {
