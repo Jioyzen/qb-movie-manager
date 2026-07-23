@@ -69,7 +69,8 @@ class TMDBClient:
         if not query:
             return None, "", ""
         self._rate_limit()
-        resp = self._request(query, year=year, language=language)
+        # 所有请求强制使用 zh-CN，确保中文名返回
+        resp = self._request(query, year=year, language="zh-CN")
         if resp is None:
             return None, "", ""
         try:
@@ -77,6 +78,24 @@ class TMDBClient:
         except Exception:
             return None, "", ""
         return self._pick_best(results, query, year)
+
+    def fetch_by_id(self, tmdb_id: str, language="zh-CN"):
+        """Fetch movie details by TMDB ID."""
+        if not tmdb_id or not tmdb_id.isdigit() or not self._api_key:
+            return None, "", ""
+        self._rate_limit()
+        try:
+            r = requests.get(
+                f"https://api.themoviedb.org/3/movie/{tmdb_id}",
+                params={"api_key": self._api_key, "language": "zh-CN"},
+                timeout=15,
+            )
+            if r.status_code == 200:
+                d = r.json()
+                return d.get("id"), d.get("title", ""), d.get("original_title", "")
+        except Exception:
+            pass
+        return None, "", ""
 
     def _has_meaningful_chinese(self, text: str) -> bool:
         cn = "".join(c for c in text if "\u4e00" <= c <= "\u9fff")
@@ -109,15 +128,15 @@ class TMDBClient:
 
         # ── Chinese path ──
         if has_cn:
-            for suffix, q, y, lang in [
-                ("cn_zh_year", cn, year, "zh-CN"),
-                ("cn_zh_no_year", cn, None, "zh-CN"),
-                ("guess_zh_year", guess_title, year, "zh-CN"),
-                ("guess_zh_no_year", guess_title, None, "zh-CN"),
+            for suffix, q, y in [
+                ("cn_zh_year", cn, year),
+                ("cn_zh_no_year", cn, None),
+                ("guess_zh_year", guess_title, year),
+                ("guess_zh_no_year", guess_title, None),
             ]:
                 if not q:
                     continue
-                tid, tcn, ten = self.search(q, year=y, language=lang)
+                tid, tcn, ten = self.search(q, year=y, language="zh-CN")
                 if tid:
                     result.update({"tmdb_id": str(tid), "tmdb_title_cn": tcn,
                                    "tmdb_title_en": ten, "matched_by": suffix})
@@ -133,13 +152,11 @@ class TMDBClient:
         for q in eng_queries:
             if not q:
                 continue
-            for suffix, y, lang in [
-                ("en_year", year, "en-US"),
-                ("en_no_year", None, "en-US"),
-                ("eng_zh_year", year, "zh-CN"),
-                ("eng_zh_no_year", None, "zh-CN"),
+            for suffix, y in [
+                ("en_year", year),
+                ("en_no_year", None),
             ]:
-                tid, tcn, ten = self.search(q, year=y, language=lang)
+                tid, tcn, ten = self.search(q, year=y, language="zh-CN")
                 if tid:
                     result.update({"tmdb_id": str(tid), "tmdb_title_cn": tcn,
                                    "tmdb_title_en": ten, "matched_by": suffix})
@@ -148,13 +165,11 @@ class TMDBClient:
         # ── Last resort: try first segment of filename ──
         first_seg = filename.split(".")[0].strip()
         if first_seg and first_seg != guess_title and first_seg != cn:
-            for suffix, y, lang in [
-                ("first_seg_year", year, "en-US"),
-                ("first_seg_no_year", None, "en-US"),
-                ("first_seg_zh_year", year, "zh-CN"),
-                ("first_seg_zh_no_year", None, "zh-CN"),
+            for suffix, y in [
+                ("first_seg_year", year),
+                ("first_seg_no_year", None),
             ]:
-                tid, tcn, ten = self.search(first_seg, year=y, language=lang)
+                tid, tcn, ten = self.search(first_seg, year=y, language="zh-CN")
                 if tid:
                     result.update({"tmdb_id": str(tid), "tmdb_title_cn": tcn,
                                    "tmdb_title_en": ten, "matched_by": suffix})

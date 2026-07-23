@@ -88,7 +88,7 @@ body {
 /* ─── Tables ───────────────────────────────────────────────── */
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #21262d; font-size: 13px; }
-th { color: #8b949e; font-weight: 500; position: sticky; top: 0; background: #161b22; }
+th { color: #8b949e; font-weight: 500; position: sticky; top: 0; background: #161b22; z-index: 10; }
 td { color: #c9d1d9; }
 tr:hover td { background: rgba(255,255,255,0.02); }
 

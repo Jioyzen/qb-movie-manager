@@ -267,7 +267,7 @@ const renderFetch = (container) => {
     </div>
     <div class="card" style="max-height:500px;overflow-y:auto">
       ${state.collectionFilter ? '<div style="padding:8px 0;font-size:12px;color:#d29922">仅显示合集种子（共 ' + collCount + ' 个）</div>' : ''}
-      <table><thead><tr><th>名称</th><th>分类</th><th>大小</th><th>类型</th></tr></thead>
+      <table><thead><tr><th style="min-width:350px">名称</th><th>分类</th><th>大小</th><th>类型</th></tr></thead>
       <tbody>${filtered.map(t => `<tr><td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${t.name}">${t.name}</td><td><span class="tag tag-blue">${t.category}</span></td><td>${fmtSize(t.size)}</td><td>${t.is_collection ? '<span class="tag tag-gold">合集</span>' : '<span class="tag tag-gray">单集</span>'}</td></tr>`).join('')}</tbody>
         </table>
       </div>
@@ -335,21 +335,22 @@ const renderTmdb = (container) => {
     </div>
     <div class="card" style="max-height:600px;overflow-y:auto">
       ${state.tmdbFilter ? '<div style="padding:8px 0;font-size:12px;color:#f85149">仅显示未匹配种子，可手动填写 TMDB ID</div>' : ''}
-      <table><thead><tr><th>状态</th><th>种子名</th><th>TMDB ID</th><th>中文名</th><th>英文名</th></tr></thead>
+      <table><thead><tr><th>状态</th><th style="min-width:350px">种子名</th><th>TMDB ID</th><th>中文名</th><th>年代</th></tr></thead>
       <tbody id="tmdb-tbody">${filtered.map(m => {
         const status = m.tmdb_id && m.tmdb_id.startsWith('protected:') ? '🛡️'
           : m.tmdb_id ? '✅'
           : state.busy ? '⏳' : '⬜';
         return `<tr id="row-${m.torrent_hash}">
           <td style="text-align:center;font-size:16px">${status}</td>
-          <td title="${m.torrent_name}" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.torrent_name}</td>
+          <td title="${m.torrent_name}" style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.torrent_name}</td>
           <td>${m.tmdb_id && !m.tmdb_id.startsWith('protected:')
             ? `<span class="tag tag-green">${m.tmdb_id}</span>`
             : m.tmdb_id && m.tmdb_id.startsWith('protected:')
               ? '<span class="tag tag-gold">合集保护</span>'
               : `<div style="display:flex;gap:4px;align-items:center"><input id="mid-${m.torrent_hash}" placeholder="填写ID" style="width:80px;padding:3px 6px;border:1px solid #30363d;border-radius:4px;background:#0d1117;color:#e1e4e8;font-size:12px"><button class="btn btn-sm" onclick="saveManualId('${m.torrent_hash}')">确认</button></div>`}
           </td>
-          <td>${m.tmdb_title_cn||'-'}</td><td>${m.tmdb_title_en||'-'}</td>
+          <td>${m.tmdb_title_cn||'-'}</td>
+          <td>${m.parsed_year||'-'}</td>
         </tr>`;
       }).join('')}</tbody></table>
     </div>` : ''}`
@@ -376,16 +377,18 @@ window.saveManualId = async (hash) => {
   const input = document.getElementById(`mid-${hash}`);
   const id = input.value.trim();
   if (!id || !/^\d+$/.test(id)) { showToast('请输入有效的 TMDB ID（数字）', 'error'); return; }
-  const d = await api('/api/tmdb/update', { method: 'POST', body: JSON.stringify({ torrent_hash: hash, tmdb_id: id }) });
+  // 先抓取电影信息
+  const info = await api('/api/tmdb/fetch', { method: 'POST', body: JSON.stringify({ tmdb_id: id }) });
+  if (!info || info.status !== 'ok') { showToast(`❌ ${info?.error || '未找到该电影'}`, 'error'); return; }
+  // 保存到匹配结果
+  const d = await api('/api/tmdb/update', { method: 'POST', body: JSON.stringify({
+    torrent_hash: hash, tmdb_id: id, tmdb_title_cn: info.tmdb_title_cn, tmdb_title_en: info.tmdb_title_en }) });
   if (d && d.status === 'ok') {
-    showToast(`✅ ${d.message}`, 'success');
-    // Refresh
+    showToast(`✅ 已匹配: ${info.tmdb_title_cn}`, 'success');
     const r = await api('/api/tmdb/results');
     if (r) state.matches = r.matches;
     renderTmdb(document.getElementById('content'));
-  } else {
-    showToast(`❌ ${d?.error || '更新失败'}`, 'error');
-  }
+  } else { showToast(`❌ ${d?.error || '更新失败'}`, 'error'); }
 };
 
 window.startTmdb = async () => {

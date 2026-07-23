@@ -485,6 +485,21 @@ def api_tmdb_update():
     return jsonify({"status": "ok", "message": f"已更新 {torrent_hash[:16]} -> TMDB ID {tmdb_id}"})
 
 
+@app.route("/api/tmdb/fetch", methods=["POST"])
+def api_tmdb_fetch():
+    """通过 TMDB ID 获取电影信息。"""
+    data = request.get_json(silent=True) or {}
+    tmdb_id = data.get("tmdb_id", "")
+    if not tmdb_id or not tmdb_id.isdigit():
+        return jsonify({"status": "error", "error": "无效的 TMDB ID"}), 400
+    from tmdb_client import TMDBClient
+    client = TMDBClient()
+    tid, tcn, ten = client.fetch_by_id(tmdb_id)
+    if tid:
+        return jsonify({"status": "ok", "tmdb_id": str(tid), "tmdb_title_cn": tcn, "tmdb_title_en": ten})
+    return jsonify({"status": "error", "error": "未找到该 ID 对应的电影"}), 404
+
+
 @app.route("/api/tmdb/pause", methods=["POST"])
 def api_tmdb_pause():
     """Toggle pause/resume for TMDB matching."""
