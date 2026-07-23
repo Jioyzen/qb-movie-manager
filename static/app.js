@@ -350,7 +350,7 @@ const renderTmdb = (container) => {
               : `<div style="display:flex;gap:4px;align-items:center"><input id="mid-${m.torrent_hash}" placeholder="填写ID" style="width:80px;padding:3px 6px;border:1px solid #30363d;border-radius:4px;background:#0d1117;color:#e1e4e8;font-size:12px"><button class="btn btn-sm" onclick="saveManualId('${m.torrent_hash}')">确认</button></div>`}
           </td>
           <td>${m.tmdb_title_cn||'-'}</td>
-          <td>${m.parsed_year||'-'}</td>
+          <td>${m.parsed_year||m.torrent_name.match(/\b(19\d{2}|20\d{2})\b/)?.[0]||'-'}</td>
         </tr>`;
       }).join('')}</tbody></table>
     </div>` : ''}`
