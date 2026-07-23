@@ -435,13 +435,17 @@ def api_tmdb_match():
 def api_tmdb_results():
     with _task_state["lock"]:
         matches = list(_task_state["tmdb_matches"])
+    total = len(matches)
+    protected = sum(1 for m in matches if m.get("tmdb_id", "").startswith("protected:"))
     matched = sum(1 for m in matches if m.get("tmdb_id") and not m.get("tmdb_id", "").startswith("protected:"))
     return jsonify({
         "status": "ok",
         "matches": matches,
-        "total": len(matches),
+        "total": total,
+        "total_to_match": total - protected,
         "matched": matched,
-        "unmatched": len(matches) - matched,
+        "unmatched": total - protected - matched,
+        "protected": protected,
     })
 
 

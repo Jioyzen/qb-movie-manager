@@ -252,6 +252,9 @@ window.fetchTorrents = async () => {
 const renderTmdb = (container) => {
   const matched = state.matches.filter(m => m.tmdb_id && !m.tmdb_id.startsWith('protected:')).length;
   const total = state.matches.length;
+  const protected = state.matches.filter(m => m.tmdb_id && m.tmdb_id.startsWith('protected:')).length;
+  const toMatch = total - protected;
+  const unmatched = toMatch - matched;
   const hasData = total > 0;
   const filtered = state.tmdbFilter ? state.matches.filter(m => !m.tmdb_id || m.tmdb_id === '') : state.matches;
   container.innerHTML = `
@@ -265,12 +268,14 @@ const renderTmdb = (container) => {
       <div class="progress-bar" style="display:none"><div class="fill" style="width:0%"></div></div>
     </div>
     ${hasData ? `
-    <div class="stats-row"><div class="stat-card"><div class="num">${total}</div><div class="label">总种子</div></div>
+    <div class="stats-row">
+      <div class="stat-card"><div class="num">${toMatch}</div><div class="label">需匹配</div></div>
       <div class="stat-card"><div class="num" style="color:#3fb950">${matched}</div><div class="label">已匹配</div></div>
       <div class="stat-card" style="cursor:pointer" onclick="toggleTmdbFilter()">
-        <div class="num" style="color:${state.tmdbFilter ? '#f85149' : '#8b949e'}">${total - matched}</div>
+        <div class="num" style="color:${state.tmdbFilter ? '#f85149' : '#8b949e'}">${unmatched}</div>
         <div class="label">${state.tmdbFilter ? '▼ 未匹配（点击显示全部）' : '未匹配'}</div>
       </div>
+      <div class="stat-card"><div class="num" style="color:#d29922">${protected}</div><div class="label">合集保护</div></div>
     </div>
     <div class="card" style="max-height:500px;overflow-y:auto">
       ${state.tmdbFilter ? '<div style="padding:8px 0;font-size:12px;color:#f85149">仅显示未匹配种子，可手动填写 TMDB ID</div>' : ''}

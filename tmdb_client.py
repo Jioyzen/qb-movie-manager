@@ -1,4 +1,4 @@
-"""TMDB client - serial matching with retry, rate limiting, and Chinese priority."""
+"""TMDB client - serial matching with retry, rate limiting, and multi-strategy."""
 import time
 import requests
 import re
@@ -90,11 +90,12 @@ class TMDBClient:
                      "Ⅰ": "1", "II": "2", "III": "3", "IV": "4", "VI": "6"}
         for k, v in roman_map.items():
             q = q.replace(k, v)
-        q = re.sub(r'\b(V\d+|REPACK|PROPER|EXTENDED|DIRECTORS?\\.?CUT|UNRATED|REMUX)\b', '', q, flags=re.I)
+        q = re.sub(r'\b(V\d+|REPACK|PROPER|EXTENDED|DIRECTORS?\.?CUT|UNRATED|REMUX)\b', '', q, flags=re.I)
         q = re.sub(r'\s+', ' ', q).strip()
         return q
 
     def match_entry(self, filename, guess_title, guess_year):
+        """Multi-strategy TMDB match. Falls back through Chinese → English → filename first segment."""
         result = {"tmdb_id": "", "tmdb_title_cn": "", "tmdb_title_en": "", "matched_by": ""}
         year = guess_year if guess_year and guess_year.isdigit() else None
         cn = extract_chinese(filename)
@@ -106,7 +107,7 @@ class TMDBClient:
             eng_title = re.sub(r'[\u4e00-\u9fff：、，。！？；："（）]', '', guess_title).strip()
             eng_title = re.sub(r'\s+', ' ', eng_title).strip()
 
-        # Chinese path
+        # ── Chinese path ──
         if has_cn:
             for suffix, q, y, lang in [
                 ("cn_zh_year", cn, year, "zh-CN"),
@@ -122,7 +123,7 @@ class TMDBClient:
                                    "tmdb_title_en": ten, "matched_by": suffix})
                     return result
 
-        # English path (also used when Chinese path fails)
+        # ── English path ──
         eng_queries = []
         if eng_title:
             eng_queries.append(eng_title)
@@ -139,6 +140,21 @@ class TMDBClient:
                 ("eng_zh_no_year", None, "zh-CN"),
             ]:
                 tid, tcn, ten = self.search(q, year=y, language=lang)
+                if tid:
+                    result.update({"tmdb_id": str(tid), "tmdb_title_cn": tcn,
+                                   "tmdb_title_en": ten, "matched_by": suffix})
+                    return result
+
+        # ── Last resort: try first segment of filename ──
+        first_seg = filename.split(".")[0].strip()
+        if first_seg and first_seg != guess_title and first_seg != cn:
+            for suffix, y, lang in [
+                ("first_seg_year", year, "en-US"),
+                ("first_seg_no_year", None, "en-US"),
+                ("first_seg_zh_year", year, "zh-CN"),
+                ("first_seg_zh_no_year", None, "zh-CN"),
+            ]:
+                tid, tcn, ten = self.search(first_seg, year=y, language=lang)
                 if tid:
                     result.update({"tmdb_id": str(tid), "tmdb_title_cn": tcn,
                                    "tmdb_title_en": ten, "matched_by": suffix})
