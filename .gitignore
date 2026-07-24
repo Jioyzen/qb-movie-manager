@@ -16,12 +16,16 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Config (keep template, ignore actual secrets if any)
-# data/config.json already checked in, but if we add secrets later:
-# data/config.json
+# Runtime data (contains user credentials & private paths)
+data/config.json
+data/state.json
+data/cache/
+
+# Environment variables (private credentials)
+.env
+
+# Project documentation for developers (not for end-user distribution)
+CLAUDE.md
 
 # Logs
 *.log
-
-# Cache
-data/cache/

@@ -1,314 +1,249 @@
-# QB 影视管理工具 (QB Movie Manager)
+# QB 影视去重工具 (QB Movie Manager)
 
-## 项目概述
+> 自动扫描 qBittorrent 种子库，智能识别同一电影的不同版本，按优先级规则保留最佳版本，清理冗余文件，释放硬盘空间。
 
-一个基于 qBittorrent + TMDB 的影视资源去重管理工具。自动扫描 qBittorrent 种子库，通过多层级优先级规则（音轨→字幕→来源→分辨率→HDR）筛选同一电影的最佳版本，清理重复资源，释放硬盘空间。
-
----
-
-## 设计目标
-
-### 核心目标
-从 qBittorrent 的种子列表中，找出同一部电影的不同版本，按照可自定义的优先级规则自动保留最佳版本，删除其余冗余版本。
-
-### 为什么要做这个工具
-- PT/BT 玩家常下载同一部电影的多个版本（不同小组、不同分辨率、不同压制参数）
-- 手动对比筛选效率极低，上千个种子根本看不完
-- 文件名解析无法获取准确的音视频信息，需要 MediaInfo 深度分析
-- 需要一种灵活可配置的优先级规则，适应不同用户的需求
+[![Python](https://img.shields.io/badge/Python-3.8+-blue)](https://python.org)
+[![Flask](https://img.shields.io/badge/Flask-3.0+-green)](https://flask.palletsprojects.com)
+[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
 ---
 
-## 功能需求
+## 目录
 
-### 已完成功能
-
-| 功能 | 状态 | 说明 |
-|------|------|------|
-| qBittorrent 连接管理 | ✅ | 地址/端口/用户名/密码配置，连接测试 |
-| 分类获取与选择 | ✅ | 测试连接时自动获取 QB 分类，用户手动勾选需处理的分类 |
-| 种子列表获取 | ✅ | 按分类拉取种子，显示名称/大小/类型 |
-| 合集种子检测 | ✅ | 通过 QB API 获取文件列表，统计视频文件数量（≥300MB），≥2个不同文件判定为合集 |
-| 花絮/删减片段过滤 | ✅ | 排除 `删减片段.mkv`、`sample`、`trailer` 等非正片文件 |
-| 分卷电影识别 | ✅ | Part.1+Part.2 等分卷电影不被误判为合集 |
-| 合集保护模式 | ✅ | 合集种子不参与 TMDB 匹配和深度分析，自动标记为保留 |
-| TMDB 自动匹配 | ✅ | 多策略匹配（中文→英文→文件名首段→罗马数字转换→版本号过滤） |
-| 手动 TMDB ID 填写 | ✅ | 匹配失败的种子可手动输入 TMDB ID，自动抓取电影信息 |
-| 暂停/继续匹配 | ✅ | 匹配过程中可暂停，修改后继续 |
-| 实时匹配进度 | ✅ | 实时显示当前匹配进度、统计数字、每行匹配状态 |
-| SMB 挂载 | ✅ | 自动挂载 QB 下载目录，读取视频文件 |
-| MediaInfo 深度分析 | ✅ | 提取音轨语言/格式、字幕语言/类型、HDR 类型（DV P5/P7/P8、HDR10+、HDR10） |
-| MediaInfo 缓存 | ✅ | 按文件路径+大小+修改时间缓存分析结果 |
-| 可排序优先级规则 | ✅ | 5 层优先级卡片（音轨→字幕→来源→分辨率→HDR），每层内部可排序 |
-| 去重决策引擎 | ✅ | 按 TMDB ID 分组，五层链逐层比较，选中最佳版本 |
-| 手动切换保留版本 | ✅ | 去重结果中可手动切换保留/删除 |
-| 批量删除种子 | ✅ | 删除种子及文件，释放硬盘空间 |
-| 配置持久化 | ✅ | JSON 配置文件，含密码掩码处理 |
-| 深色主题 UI | ✅ | 暗色主题，响应式布局 |
-
-### 待完成/待优化功能
-
-| 功能 | 优先级 | 说明 |
-|------|--------|------|
-| 表头 sticky 穿透 | 高 | 滚动时内容穿透表头，`z-index` 和 `isolation` 尝试无效 |
-| 列表实时刷新 | 高 | 某些情况下获取种子/匹配完成后列表不自动刷新 |
-| 深度分析进度 | 中 | 分析过程中的实时进度显示不够流畅 |
-| 并发 TMDB 匹配 | 中 | 目前串行匹配，1570 个种子需约 2-3 分钟 |
-| 并发 MediaInfo 分析 | 中 | 目前串行分析，1570 个种子需约 1 小时 |
-| 网络错误重试 | 低 | TMDB 请求超时时的重试机制 |
-| 操作日志 | 低 | 记录删除操作历史 |
+- [用户痛点](#用户痛点)
+- [产品功能](#产品功能)
+- [技术优势](#技术优势)
+- [效果展示](#效果展示)
+- [快速开始](#快速开始)
+- [部署指南](#部署指南)
+- [FAQ](#faq)
 
 ---
 
-## 工作流程
+## 用户痛点
+
+### 🤯 PT/BT 玩家的重复困境
+
+玩 PT/BT 的你，是否也遇到过这些问题？
+
+| 问题 | 描述 |
+|------|------|
+| **重复下载** | 同一部电影下了三四遍 — 4K 版、Remux 版、压制的、不同小组的，硬盘空间不知不觉就满了 |
+| **手动对比累死人** | 想删掉差的版本，但上千个种子，手动对比分辨率、音轨、HDR、字幕太痛苦了 |
+| **文件名不可信** | 文件名写着"4K HDR"，实际可能是 SDR 冒充的；写着"全景声"，可能只有 AC3 |
+| **合集搞不清** | 遇到《哈利波特》8部合集，分不清是合集还是单部电影的多文件分卷 |
+| **工具体验差** | 现有工具要么太复杂，要么不支持中文场景，要么需要命令行操作 |
+
+### 🎯 这个工具能做什么
+
+**一句话：识别同一电影的所有版本，帮你选出最好的，删掉多余的。**
+
+```
+《盗梦空间》Inception (2010)
+├── 🏆 保留: Inception.2010.2160p.BluRay.x265.TrueHD.Atmos.7.1-HDS
+│             → 国语全景声 + 中文字幕 + 4K + Dolby Vision P7
+│
+├── 🗑️ 删除: Inception.2010.1080p.BluRay.x264.DTS-HD.MA.5.1-HDS
+│             → 被 4K 版击败（分辨率低）
+│
+└── 🗑️ 删除: Inception.2010.2160p.WEB-DL.x265.AC3.5.1
+              → 被 BluRay 版击败（片源质量差）
+```
+
+---
+
+## 产品功能
+
+### 6 步工作流，3 分钟搞定
 
 ```
 配置 → 获取种子 → TMDB 匹配 → 深度分析 → 去重筛选 → 清理删除
 ```
 
-### 步骤详解
+每一步都有实时进度反馈，Web 界面操作，无需命令行。
 
-**1. 配置**
-- 配置 qBittorrent 连接（地址/端口/用户名/密码）
-- 点击"测试连接并获取分类"，自动拉取 QB 分类列表
-- 手动勾选需要处理的分类（如"4K电影"、"高清电影"）
-- 配置 SMB 挂载信息（地址/共享名/用户名/密码）
-- 配置 TMDB API Key 和请求间隔
-- 配置合集策略（跳过保护/合集优先）和小文件阈值
-- 点击"保存配置，进入获取种子"，验证 SMB 挂载和 TMDB Key，通过后自动跳转
+### 核心功能一览
 
-**2. 获取种子**
-- 从 qBittorrent 拉取选中分类下的所有种子
-- 通过 QB API 获取每个种子的文件列表，统计视频文件数量
-- 判定合集种子（≥2个视频文件且非分卷电影）
-- 显示种子列表，可点击"合集"数字筛选查看
+#### 🎬 智能匹配
+- **多策略 TMDB 匹配**：中文名 → 英文名 → 文件名首段，自动转换罗马数字（Ⅱ→2），自动过滤版本号（V2、REPACK、PROPER）
+- **实时进度**：匹配过程实时显示每行状态（⬜→⏳→✅），支持暂停/继续
+- **手动补录**：匹配失败的种子可手动输入 TMDB ID，自动抓取电影信息
 
-**3. TMDB 匹配**
-- 对每个非合集种子，用 guessit 解析文件名提取标题+年份
-- 多策略匹配 TMDB：中文 → 英文 → 混合 → 文件名首段
-- 自动转换罗马数字（Ⅱ→2、Ⅰ→1）
-- 自动过滤版本号（V2、REPACK、PROPER 等）
-- 合集种子自动标记为"合集保护"
-- 支持实时暂停/继续，每行状态实时更新（⬜→⏳→✅/🛡️）
-- 未匹配种子可手动填写 TMDB ID，自动抓取电影信息
-- 统计：需匹配 / 已匹配 / 未匹配 / 合集保护
+#### 🔬 深度分析
+- **MediaInfo 引擎**：通过 SMB 挂载读取 NAS 上的文件，提取真实音视频信息
+- **音轨检测**：识别国语/英语、TrueHD/Atmos/AC3、全景声标记
+- **字幕检测**：识别中文字幕、特效字幕（ASS）、强制字幕
+- **HDR 识别**：精确区分 Dolby Vision P5/P7/P8、HDR10+、HDR10、SDR
+- **结果缓存**：按文件哈希缓存，重复运行秒出结果
 
-**4. 深度分析**
-- 通过 SMB 挂载访问 QB 下载目录
-- 对每个非合集种子，用 mediainfo CLI 提取音视频信息
-- 分析内容：音轨语言/格式（Atmos 检测）、字幕语言/类型（特效/强制）、HDR 类型（DV P5/P7/P8、HDR10+、HDR10）
-- 结果缓存到 `data/cache/`（按文件路径+大小+修改时间哈希）
-- 合集种子仅创建最小 profile（文件名分析，无需 SMB/MediaInfo）
+#### ⚖️ 智能去重
+- **5 层优先级链**：音轨 > 字幕 > 来源 > 分辨率 > HDR，逐层比较，第一层分出胜负即停止
+- **可自定义规则**：每层优先级顺序可自由调整
+- **合集智能处理**：自动识别合集种子（≥2个视频文件），支持"跳过保护"和"合集优先"两种策略
+- **手动干预**：去重结果可一键切换保留/删除
 
-**5. 去重筛选**
-- 按 TMDB ID 分组（未匹配的按 title+year 分组）
-- 可配置 5 层优先级规则（音轨→字幕→来源→分辨率→HDR）
-- 每层内部可排序（如音频：中文全景声 > 中文音轨 > 英文全景声 > 英文音轨 > 其他）
-- 每组显示所有版本，自动标记保留/删除
-- 可手动切换保留版本
-- 合集保护：合集种子自动保留，仅在独立种子间去重
-- 合集优先：合集版本优于独立版本
-
-**6. 清理删除**
+#### 🧹 清理删除
 - 显示所有待删除种子及可释放空间
-- 用户确认后调用 QB API 删除种子及文件
-- 从本地缓存中移除已删除数据
+- 调用 qBittorrent API 删除种子及文件
+- 一键批量清理
 
 ---
 
-## 技术架构
+## 技术优势
 
-### 系统架构
-
-```
-┌──────────────────────────────────────────────────┐
-│  浏览器前端 (SPA)                                │
-│  HTML + CSS + Vanilla JS                        │
-│  ┌──────────┬──────────────────────────────┐     │
-│  │  Sidebar  │      Content Area            │     │
-│  │  6 steps  │      Dynamic rendering       │     │
-│  └──────────┴──────────────────────────────┘     │
-└──────────────────────┬───────────────────────────┘
-                       │ HTTP API (JSON)
-┌──────────────────────┴───────────────────────────┐
-│  Flask 后端                                       │
-│  ┌──────────┬──────────┬──────────┬──────────┐   │
-│  │  Config   │  QB API  │  TMDB   │  Media   │   │
-│  │  Manager  │  Client  │  Client  │  Info    │   │
-│  └──────────┴──────────┴──────────┴──────────┘   │
-│  ┌──────────┬──────────┬──────────┐             │
-│  │  Scoring  │  Dedup   │  Parser  │             │
-│  │  Engine   │  Engine  │  (guessit)│            │
-│  └──────────┴──────────┴──────────┘             │
-└──────────────────────┬───────────────────────────┘
-                       │
-         ┌─────────────┼─────────────┐
-         ▼             ▼             ▼
-   qBittorrent      TMDB API      SMB Share
-   Web API v2                    (MediaInfo)
-```
-
-### 后端模块
-
-| 模块 | 职责 | 关键类/函数 |
-|------|------|------------|
-| `app.py` | Flask 路由、全局状态管理、后台任务调度 | `_task_state`, `_background_task()`, `_progress_callback()` |
-| `config.py` | 配置加载/保存/掩码 | `Config` 类, `DEFAULTS` |
-| `qb_client.py` | qBittorrent Web API 封装 | `QBClient` 类 |
-| `parser.py` | guessit 文件名解析 | `parse_filename()`, `extract_chinese()` |
-| `tmdb_client.py` | TMDB API 搜索/匹配 | `TMDBClient` 类, `match_entry()`, `search()`, `fetch_by_id()` |
-| `scoring_engine.py` | 五层优先级评分模型 | `MediaProfile` 数据类, `rank_profiles()` |
-| `media_analyzer.py` | SMB 挂载 + MediaInfo 分析 | `analyze_torrents()`, `_detect_hdr_level()`, `_detect_audio_level()` |
-| `dedup_engine.py` | 去重决策引擎 | `DedupEngine` 类, `DedupResult` 类 |
-
-### 关键数据流
-
-```
-1. 获取种子 → torrents[] (raw)
-2. TMDB 匹配 → tmdb_matches[] (含 tmdb_id, tmdb_title_cn, tmdb_year, parsed_year)
-3. 深度分析 → profiles[] (MediaProfile 对象)
-4. 去重计算 → dedup_results[] (group_key, keep, delete[])
-5. 清理删除 → 调用 QB API 删除种子
-```
-
-### 全局状态 (`_task_state`)
-
-```python
-_task_state = {
-    "running": bool,        # 是否有后台任务在运行
-    "paused": bool,         # TMDB 匹配是否暂停
-    "current_step": str,    # 当前步骤: fetch|tmdb|analyze|dedup
-    "progress": {"current": int, "total": int, "message": str},
-    "torrents": [],         # 种子列表
-    "tmdb_matches": [],     # TMDB 匹配结果
-    "profiles": [],         # MediaProfile 列表
-    "dedup_results": [],    # 去重结果
-    "collection_flags": {}, # {torrent_hash: bool}
-    "lock": threading.Lock(),
-}
-```
-
-### 优先级规则配置
-
-```json
-{
-  "layers": ["audio", "subtitle", "source", "resolution", "hdr"],
-  "audio": ["chinese_atmos", "chinese_audio", "english_atmos", "english_audio", "other"],
-  "subtitle": ["chinese_forced", "chinese_sub", "english_forced", "english_sub", "none"],
-  "source": ["bluray", "webdl", "other"],
-  "resolution": ["2160p", "1080p", "other"],
-  "hdr": ["dv_p7", "dv_p8", "dv_p5", "hdr10plus", "hdr10", "sdr"]
-}
-```
+| 特性 | 本项目 | 其他方案 |
+|------|--------|----------|
+| **中文文件名支持** | ✅ 专为 PT/BT 中文场景优化 | ❌ 英文为主，中文识别差 |
+| **MediaInfo 深度分析** | ✅ 真实读取文件元数据 | ❌ 仅靠文件名猜测 |
+| **Dolby Vision 精确识别** | ✅ 区分 P5/P7/P8 | ❌ 统一标为 DV |
+| **合集保护** | ✅ 自动识别合集，避免误删 | ❌ 无此功能 |
+| **Web 界面** | ✅ 浏览器操作，无需命令行 | ⚠️ 部分需 CLI |
+| **实时进度反馈** | ✅ 每步实时显示 | ❌ 黑盒运行 |
+| **优先级可定制** | ✅ 自由调整各层顺序 | ❌ 固定规则 |
+| **SMB 远程分析** | ✅ 支持 NAS 远程挂载 | ⚠️ 需本地文件 |
+| **单文件部署** | ✅ 一个 `python3 app.py` 搞定 | ⚠️ 需复杂环境配置 |
 
 ---
 
-## 文件结构
+## 快速开始
 
-```
-/home/zeng/qb-movie-manager/
-├── app.py                    # Flask 主应用，API 路由，后台任务调度
-├── config.py                 # 配置加载/保存/默认值
-├── qb_client.py              # qBittorrent Web API v2 客户端
-├── parser.py                 # guessit 文件名解析，中文提取
-├── tmdb_client.py            # TMDB 搜索/匹配/ID 查询
-├── scoring_engine.py         # 五层优先级评分模型，MediaProfile 数据类
-├── media_analyzer.py         # SMB 挂载管理，MediaInfo 深度分析，缓存
-├── dedup_engine.py           # 去重分组/决策/结果
-├── requirements.txt          # Flask, requests, guessit
-├── README.md                 # 项目文档
-│
-├── templates/
-│   └── index.html            # 前端 SPA 入口（6 步骤侧边栏）
-│
-├── static/
-│   ├── app.css               # 深色主题样式
-│   └── app.js                # 前端 SPA 逻辑（轮询、渲染、API 调用）
-│
-├── data/
-│   ├── config.json           # 用户配置（QB/SMB/TMDB/策略）
-│   ├── .gitkeep
-│   └── cache/                # MediaInfo 分析缓存（.gitignore）
-│       └── *.json            # 按文件路径+大小+修改时间哈希
-│
-└── .gitignore                # 排除 __pycache__, .pyc, cache/, *.log
-```
+### 环境要求
 
----
+- **Linux 主机**（推荐 Ubuntu/Debian，需要 `sudo` 挂载 SMB）
+- **Python 3.8+**
+- **qBittorrent**（已运行，启用 Web UI）
+- **TMDB API Key**（[免费申请](https://www.themoviedb.org/settings/api)）
+- **MediaInfo**（系统级：`sudo apt-get install mediainfo`）
+- 可选：SMB/CIFS 共享的 NAS 存储（如果 MediaInfo 需要在远程文件上运行）
 
-## 已知问题
-
-### 1. 表头 sticky 穿透
-**现象：** 滚动表格时，`tbody` 内容穿透 `thead` 显示在表头之上。
-**尝试过的修复：**
-- `th { position: sticky; top: 0; z-index: 10; }` → 无效
-- `thead { position: sticky; top: 0; z-index: 20; }` → 更糟
-- `th { z-index: 100; }` → 无效
-- `div.card { position: relative; isolation: isolate; }` → 无效
-- 容器 div 添加 `position:relative; isolation:isolate` 内联样式 → 无效
-**可能的原因：** 父容器 `overflow: auto` 创建的层叠上下文与 `sticky` 的交互问题。
-**建议方案：** 改用 JavaScript 监听滚动事件，动态切换表头样式，或用 `position: fixed` 模拟固定表头。
-
-### 2. 列表刷新问题
-**现象：** 获取种子后，列表不自动显示，需要切换到其他页面再切回来。
-**可能的原因：** `refreshCurrentStep` 中的 `renderContent()` 调用时机问题。
-**修复进展：** 已修复 `refreshCurrentStep` 调用 `renderContent()` 而非直接调用 render 函数。
-
-### 3. 深度分析耗时
-**现象：** 1570 个种子，每个需要 mediainfo 分析约 2-3 秒，总共约 1 小时。
-**优化方案：** 添加并发线程池，限制并发数（如 4-8 线程），注意 SMB 连接限制。
-
-### 4. TMDB 匹配耗时
-**现象：** 1570 个种子，每个约 0.3 秒（含速率限制），总共约 8 分钟。
-**优化方案：** 降低速率限制到 0.05 秒（TMDB 允许 40 请求/10 秒），或使用多线程。
-
----
-
-## 配置示例 (`data/config.json`)
-
-```json
-{
-  "qb_host": "192.168.2.200",
-  "qb_port": 8085,
-  "qb_username": "admin",
-  "qb_password": "zz0770",
-  "tmdb_api_key": "f71a029311ca7a272c05c7d217bb5c5b",
-  "tmdb_rate_limit": 0.2,
-  "tmdb_workers": 1,
-  "min_file_size_mb": 300,
-  "categories": ["4K电影", "高清电影"],
-  "smb_host": "192.168.2.200",
-  "smb_share": "media",
-  "smb_username": "zeng",
-  "smb_password": "Zz198903+",
-  "smb_mount_point": "/mnt/qb_downloads",
-  "qb_download_prefix": "/downloads",
-  "collection_strategy": "skip",
-  "priority_layers": ["audio", "subtitle", "source", "resolution", "hdr"]
-}
-```
-
----
-
-## 开发环境
+### 安装
 
 ```bash
-# 启动服务
-cd /home/zeng/qb-movie-manager
-python3 app.py
+# 1. 克隆仓库
+git clone https://github.com/Jioyzen/qb-movie-manager.git
+cd qb-movie-manager
 
-# 访问
-http://192.168.2.222:5000
+# 2. 安装 Python 依赖
+pip install -r requirements.txt
 
-# 依赖
-pip install flask requests guessit
+# 3. 安装 MediaInfo
 sudo apt-get install mediainfo
 
-# SMB 挂载（自动）
-sudo mkdir -p /mnt/qb_downloads
-sudo mount -t cifs //192.168.2.200/media /mnt/qb_downloads \
-  -o username=zeng,password=Zz198903+,iocharset=utf8
+# 4. 配置环境变量
+cp .env.example .env
+# 编辑 .env 填入你的 QB、TMDB、SMB 信息
+vim .env
 
-# 密码
-sudo 密码: zz0770
+# 5. 启动
+python3 app.py
 ```
+
+### 首次使用
+
+1. 浏览器访问 `http://你的IP:5000`
+2. 进入 **配置** 页面，点击"测试连接并获取分类"
+3. 勾选需要处理的分类（如"4K电影"、"高清电影"）
+4. 点击"保存配置，开始获取种子"
+5. 依次完成 6 个步骤，即可清理重复资源
+
+---
+
+## 部署指南
+
+### 开发环境
+
+```bash
+python3 app.py
+# 监听 http://0.0.0.0:5000
+```
+
+### 生产环境（gunicorn）
+
+```bash
+pip install gunicorn
+gunicorn -w 1 -b 0.0.0.0:5000 app:app
+```
+
+> 注意：使用单 worker 模式，因为应用使用全局状态和线程锁。
+
+### 环境变量配置
+
+创建 `.env` 文件（参见 `.env.example`），或在系统环境变量中设置：
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `QB_HOST` | qBittorrent 地址 | `192.168.1.100` |
+| `QB_PORT` | qBittorrent Web UI 端口 | `8085` |
+| `QB_USERNAME` | qBittorrent 用户名 | `admin` |
+| `QB_PASSWORD` | qBittorrent 密码 | — |
+| `TMDB_API_KEY` | TMDB API Key（必填） | — |
+| `SMB_HOST` | SMB/NAS 地址 | `192.168.1.100` |
+| `SMB_SHARE` | SMB 共享名 | `downloads` |
+| `SMB_MOUNT_POINT` | 本地挂载点 | `/mnt/qb_downloads` |
+| `QB_DOWNLOAD_PREFIX` | QB 下载路径前缀 | `/downloads` |
+
+### 配置持久化
+
+所有配置（包括运行时通过 UI 修改的）保存在 `data/config.json`。密码在 API 响应中自动掩码，但存储在磁盘上为明文，请确保文件权限正确。
+
+### 数据目录
+
+```
+data/
+├── config.json        # 运行时配置（UI 可修改）
+├── config.example.json # 配置模板
+├── state.json          # 步骤状态持久化（自动保存）
+└── cache/              # MediaInfo 分析缓存
+    └── *.json          # 按文件路径+大小+修改时间哈希
+```
+
+---
+
+## FAQ
+
+### QB 连接不上？
+
+1. 确认 qBittorrent 已启用 Web UI（设置 → Web UI → 勾选"Web 用户界面"）
+2. 确认端口号正确（默认 8085）
+3. 确认用户名密码正确
+
+### TMDB 匹配失败？
+
+1. 确认 TMDB API Key 有效（[申请地址](https://www.themoviedb.org/settings/api)）
+2. 中文名匹配失败可尝试手动输入 TMDB ID
+3. TMDB 有速率限制，可在配置中调整 `tmdb_rate_limit`
+
+### 深度分析很慢？
+
+- 首次运行需要逐个文件 mediainfo 分析，约 2-3 秒/个
+- 分析结果会缓存到 `data/cache/`，下次运行直接复用
+- 合集种子仅做文件名分析，跳过 MediaInfo
+
+### 合集种子会误删吗？
+
+- 默认 `collection_strategy: "skip"` 模式下，合集种子自动保留，不参与去重
+- 可在配置中切换到 `"prefer"` 模式（合集版本优先于独立版本）
+
+---
+
+## 技术栈
+
+- **后端**：Flask (Python 3)
+- **前端**：Vanilla JS SPA，暗色主题 CSS
+- **外部 API**：qBittorrent Web API v2、TMDB v3 API、mediainfo CLI
+- **依赖**：Flask、requests、guessit、gunicorn
+
+---
+
+## License
+
+MIT
+
+---
+
+## 致谢
+
+- [TMDB](https://www.themoviedb.org/) 提供电影数据 API
+- [qBittorrent](https://www.qbittorrent.org/) 提供下载管理 API
+- [MediaInfo](https://mediaarea.net/en/MediaInfo) 提供多媒体文件分析
+- [guessit](https://github.com/guessit-io/guessit) 提供文件名解析
