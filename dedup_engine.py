@@ -9,7 +9,7 @@ import re
 from collections import defaultdict
 from typing import Optional
 
-from scoring_engine import MediaProfile, rank_profiles
+from scoring_engine import MediaProfile, rank_profiles, rank_profiles_with_priority
 from config import config
 
 
@@ -35,13 +35,22 @@ class DedupResult:
 
     def __init__(self, group_key: str, profiles: list[MediaProfile],
                  collection_strategy: str,
-                 tmdb_title_cn: str = "", tmdb_title_en: str = ""):
+                 tmdb_title_cn: str = "", tmdb_title_en: str = "",
+                 priority_layers: list[str] = None, priority_order: dict[str, list[str]] = None):
         self.group_key = group_key
         self.profiles = profiles
         self.collection_strategy = collection_strategy
         self.tmdb_title_cn = tmdb_title_cn
         self.tmdb_title_en = tmdb_title_en
+        self.priority_layers = priority_layers
+        self.priority_order = priority_order
         self._decide()
+
+    def _rank(self, profiles_list):
+        """使用配置的优先级链排序，回退到默认排序。"""
+        if self.priority_layers and self.priority_order:
+            return rank_profiles_with_priority(profiles_list, self.priority_layers, self.priority_order)
+        return rank_profiles(profiles_list)
 
     def _decide(self):
         strategy = self.collection_strategy
@@ -62,21 +71,21 @@ class DedupResult:
                 for p in alone:
                     p._keep = True
             else:
-                ranked = rank_profiles(alone)
+                ranked = self._rank(alone)
                 ranked[0]._keep = True
                 for p in ranked[1:]:
                     p._keep = False
         elif has_collection and strategy == "prefer":
             coll = [p for p in profiles if p.is_collection]
             alone = [p for p in profiles if not p.is_collection]
-            ranked_coll = rank_profiles(coll)
+            ranked_coll = self._rank(coll)
             ranked_coll[0]._keep = True
             for p in ranked_coll[1:]:
                 p._keep = False
             for p in alone:
                 p._keep = False
         else:
-            ranked = rank_profiles(profiles)
+            ranked = self._rank(profiles)
             ranked[0]._keep = True
             for p in ranked[1:]:
                 p._keep = False
@@ -105,9 +114,12 @@ class DedupResult:
 
 
 class DedupEngine:
-    def __init__(self, profiles: list[MediaProfile], tmdb_matches: list[dict] = None):
+    def __init__(self, profiles: list[MediaProfile], tmdb_matches: list[dict] = None,
+                 priority_layers: list[str] = None, priority_order: dict[str, list[str]] = None):
         self.profiles = profiles
         self.tmdb_matches = tmdb_matches or []
+        self.priority_layers = priority_layers
+        self.priority_order = priority_order
         # Build lookup: torrent_hash -> tmdb_match
         self._tmdb_lookup = {m["torrent_hash"]: m for m in self.tmdb_matches if m.get("tmdb_id")}
         self.groups: list[DedupResult] = []
@@ -153,6 +165,8 @@ class DedupEngine:
                 key, members, strategy,
                 tmdb_title_cn=info["cn"],
                 tmdb_title_en=info["en"],
+                priority_layers=self.priority_layers,
+                priority_order=self.priority_order,
             ))
 
         self.groups.sort(key=lambda g: g.group_key)

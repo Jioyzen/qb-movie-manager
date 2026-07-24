@@ -43,32 +43,30 @@ const startPolling = () => {
             renderTmdb(document.getElementById('content'));
           } else if (hadData && live.matches.length > 0) {
             // 已有数据，只更新统计数字和表格行
-            const totalSeeds = state.torrents.length;
-            const prot = state.torrents.filter(t => t.is_collection).length;
-            const toMatch = totalSeeds - prot;
-            const matched = live.matches.filter(m => m.tmdb_id && !m.tmdb_id.startsWith('protected:')).length;
+            const nonColl = state.torrents.filter(t => !t.is_collection);
+            const totalSeeds = nonColl.length;
+            const matched = live.matches.filter(m => m.tmdb_id && !m.tmdb_id.startsWith('protected:') && !m.is_collection).length;
             const el = document.getElementById('tmdb-stats');
             if (el) {
               el.innerHTML = `
-                <div class="stat-card"><div class="num">${toMatch}</div><div class="label">需匹配</div></div>
+                <div class="stat-card"><div class="num">${totalSeeds}</div><div class="label">需匹配</div></div>
                 <div class="stat-card"><div class="num" style="color:#3fb950">${matched}</div><div class="label">已匹配</div></div>
-                <div class="stat-card"><div class="num" style="color:#8b949e">${toMatch - matched}</div><div class="label">未匹配</div></div>
-                <div class="stat-card"><div class="num" style="color:#d29922">${prot}</div><div class="label">合集保护</div></div>`;
+                <div class="stat-card"><div class="num" style="color:#8b949e">${totalSeeds - matched}</div><div class="label">未匹配</div></div>`;
             }
             const tbody = document.getElementById('tmdb-tbody');
             if (tbody) {
               live.matches.forEach(m => {
+                if (m.is_collection) return;
                 const row = document.getElementById('row-' + m.torrent_hash);
                 if (row && m.tmdb_id) {
-                  const status = m.tmdb_id.startsWith('protected:') ? '🛡️' : '✅';
-                  const idHtml = m.tmdb_id.startsWith('protected:')
-                    ? '<span class="tag tag-gold">合集保护</span>'
-                    : `<span class="tag tag-green">${m.tmdb_id}</span>`;
+                  const status = '✅';
+                  const idHtml = `<span class="tag tag-green">${m.tmdb_id}</span>`;
                   row.innerHTML = `<td style="text-align:center;font-size:16px">${status}</td>
                     <td title="${m.torrent_name}" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.torrent_name}</td>
                     <td>${idHtml}</td>
-                    <td>${m.tmdb_title_cn||'-'}</td>
-                    <td>${m.tmdb_title_en||'-'}</td>`;
+                    <td style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.tmdb_title_cn||'-'}</td>
+                    <td>${m.tmdb_year||m.parsed_year||'-'}</td>
+                    <td>${m.tmdb_rating ? '<span class="tag tag-green">' + m.tmdb_rating + '</span>' : '-'}</td>`;
                 }
               });
             }
@@ -93,7 +91,7 @@ const refreshCurrentStep = async () => {
     case 4: { const d = await api('/api/dedup/results'); if (d) { state.dedup = d.groups; state.overview = d.summary; } break; }
   }
   // 用 renderContent 重新渲染（自动传入正确的 container）
-  renderContent();
+  await renderContent();
 };
 
 window.switchStep = async (idx) => {
@@ -103,15 +101,115 @@ window.switchStep = async (idx) => {
   else if (idx === 2) { const d = await api('/api/tmdb/results'); if (d) state.matches = d.matches; }
   else if (idx === 3) { const d = await api('/api/analyze/profiles'); if (d) state.profiles = d.profiles; }
   else if (idx === 4) { const d = await api('/api/dedup/results'); if (d) { state.dedup = d.groups; state.overview = d.summary; } }
-  renderContent();
+  await renderContent();
   const p = await api('/api/progress');
   if (p && p.running) { state.busy = true; startPolling(); }
 };
 
-const renderContent = () => {
+const renderContent = async () => {
   const c = document.getElementById('content'); c.innerHTML = '';
-  ({ 0: renderConfig, 1: renderFetch, 2: renderTmdb, 3: renderAnalyze, 4: renderDedup, 5: renderCleanup })[state.step](c);
+  await ({ 0: renderConfig, 1: renderFetch, 2: renderTmdb, 3: renderAnalyze, 4: renderDedup, 5: renderCleanup })[state.step](c);
+  setTimeout(fixStickyHeaders, 50);
 };
+
+// ─── 修复表头穿透 - position:fixed 克隆 ────────────────────
+function fixStickyHeaders() {
+  // 先清除所有残留的固定表头
+  document.querySelectorAll('.sticky-header-fixed').forEach(el => el.remove());
+  document.querySelectorAll('.card[style*="overflow-y:auto"]').forEach(card => {
+    if (card._stickyFixed) return;
+    card._stickyFixed = true;
+    const table = card.querySelector('table');
+    if (!table) return;
+    const thead = table.querySelector('thead');
+    if (!thead || !thead.querySelector('th')) return;
+
+    // 恢复原始 thead
+    thead.style.visibility = '';
+    thead.style.height = '';
+
+    // 测量 th 宽度
+    const ths = thead.querySelectorAll('th');
+    const widths = [];
+    ths.forEach(th => widths.push(th.offsetWidth));
+
+    // 创建固定表头
+    const header = document.createElement('div');
+    header.className = 'sticky-header-fixed';
+    header._card = card;
+    header.style.cssText = 'position:fixed;z-index:9999;background:#161b22;display:flex;pointer-events:none;';
+    document.body.appendChild(header);
+
+    // 填充表头单元格
+    ths.forEach((th, i) => {
+      const cell = document.createElement('div');
+      cell.textContent = th.textContent;
+      cell.style.cssText = `padding:8px 12px;font-size:13px;color:#8b949e;font-weight:500;border-bottom:1px solid #30363d;flex:0 0 ${widths[i]}px;box-sizing:border-box;text-align:left;`;
+      header.appendChild(cell);
+    });
+
+    // 初始隐藏
+    header.style.display = 'none';
+
+    // 更新位置
+    const pad = 20;
+    function updatePos() {
+      const rect = card.getBoundingClientRect();
+      if (card.scrollTop > 0) {
+        header.style.display = 'flex';
+        header.style.top = rect.top + 'px';
+        header.style.left = (rect.left + pad) + 'px';
+        header.style.width = card.clientWidth + 'px';
+      } else {
+        header.style.display = 'none';
+      }
+    }
+
+    // 卡片滚动监听
+    card.addEventListener('scroll', () => { requestAnimationFrame(updatePos); });
+  });
+
+  // 全局页面滚动和窗口大小变化监听（仅注册一次）
+  if (!window._stickyHeaderInit) {
+    window._stickyHeaderInit = true;
+    const contentEl = document.querySelector('.content');
+
+    // 窗口大小变化
+    window.addEventListener('resize', () => {
+      document.querySelectorAll('.sticky-header-fixed').forEach(h => {
+        const c = h._card;
+        if (c && c.scrollTop > 0) {
+          const r = c.getBoundingClientRect();
+          h.style.top = r.top + 'px';
+          h.style.left = (r.left + 20) + 'px';
+          h.style.width = c.clientWidth + 'px';
+        }
+      });
+    });
+
+    // 页面内容区域滚动
+    if (contentEl) {
+      contentEl.addEventListener('scroll', () => {
+        requestAnimationFrame(() => {
+          document.querySelectorAll('.sticky-header-fixed').forEach(h => {
+            const c = h._card;
+            if (c) {
+              const r = c.getBoundingClientRect();
+              if (c.scrollTop > 0) {
+                h.style.display = 'flex';
+                h.style.top = r.top + 'px';
+                h.style.left = (r.left + 20) + 'px';
+                h.style.width = c.clientWidth + 'px';
+              } else {
+                h.style.display = 'none';
+              }
+            }
+          });
+        });
+      });
+    }
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Step 0: 配置
@@ -124,6 +222,7 @@ const renderConfig = async (container) => {
   container.innerHTML = `
     <h2>⚙️ 配置</h2>
     <p class="desc">配置完成后点击底部按钮进入下一步</p>
+    <div id="config-msg" style="display:none;padding:10px 16px;border-radius:8px;margin-bottom:16px;font-size:13px;"></div>
     <div class="card"><div class="card-title">qBittorrent 连接</div>
       <div class="form-row">
         <div class="form-group"><label>地址</label><input id="c-qb-h" value="${d.config.qb_host}"></div>
@@ -149,7 +248,6 @@ const renderConfig = async (container) => {
       <div class="form-row">
         <div class="form-group" style="max-width:300px"><label>API Key</label><input id="c-tk" value="${d.config.tmdb_api_key}"></div>
         <div class="form-group" style="max-width:100px"><label>请求间隔(秒)</label><input id="c-tr" value="${d.config.tmdb_rate_limit}"></div>
-        <div class="form-group" style="max-width:100px"><label>并发线程</label><input id="c-tw" value="${d.config.tmdb_workers}"></div>
       </div>
     </div>
     <div class="card"><div class="card-title">去重策略</div>
@@ -159,8 +257,7 @@ const renderConfig = async (container) => {
       </div>
     </div>
     <div class="btn-row" style="justify-content:center;margin-top:24px">
-      <button class="btn btn-primary" onclick="verifyAndGo()" id="btn-go" style="font-size:15px;padding:12px 32px">✅ 保存配置，进入获取种子</button>
-      <span id="cfg-verify-r" style="font-size:13px;color:#8b949e;"></span>
+      <button class="btn btn-primary" onclick="verifyAndGo()" id="btn-go" style="font-size:15px;padding:12px 32px">✅ 保存配置，开始获取种子</button>
     </div>`;
   if (state.qbCategories.length > 0) renderCatCheckboxes();
 };
@@ -212,9 +309,26 @@ window.testQBAndFetchCats = async () => {
   }
 };
 
+function showConfigMsg(msg, type) {
+  const el = document.getElementById('config-msg');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = type || 'error';
+  el.style.display = 'block';
+}
+
 window.verifyAndGo = async () => {
   const btn = document.getElementById('btn-go'); btn.disabled = true;
-  const el = document.getElementById('cfg-verify-r'); el.textContent = '验证中...';
+  showConfigMsg('验证中...', 'success');
+
+  // 检查是否已获取分类并勾选了至少一个
+  const catCheckboxes = document.getElementById('cat-checkboxes');
+  if (!catCheckboxes || catCheckboxes.querySelectorAll('input:checked').length === 0) {
+    showConfigMsg('❌ 请先测试连接并至少选择一个分类', 'error');
+    btn.disabled = false;
+    return;
+  }
+
   // Save config first
   await api('/api/config', { method: 'PUT', body: JSON.stringify({
     qb_host: document.getElementById('c-qb-h').value, qb_port: parseInt(document.getElementById('c-qb-p').value),
@@ -222,7 +336,6 @@ window.verifyAndGo = async () => {
     smb_host: document.getElementById('c-sh').value, smb_share: document.getElementById('c-ss').value,
     smb_username: document.getElementById('c-su').value, smb_password: document.getElementById('c-sp').value,
     tmdb_api_key: document.getElementById('c-tk').value, tmdb_rate_limit: parseFloat(document.getElementById('c-tr').value) || 0.2,
-    tmdb_workers: parseInt(document.getElementById('c-tw').value) || 1,
     categories: state.config?.categories || [],
     collection_strategy: document.getElementById('c-col').value,
     min_file_size_mb: parseInt(document.getElementById('c-ms').value) || 300 }) });
@@ -230,12 +343,10 @@ window.verifyAndGo = async () => {
   // Verify
   const v = await api('/api/config/verify', { method: 'POST' });
   if (v && v.status === 'ok') {
-    el.textContent = '✅ 配置有效，进入获取种子页面';
-    el.style.color = '#3fb950';
+    showConfigMsg('✅ 配置有效，开始获取种子', 'success');
     switchStep(1);
   } else {
-    el.textContent = `❌ ${v?.message || '配置验证失败'}`;
-    el.style.color = '#f85149';
+    showConfigMsg(`❌ ${v?.message || '配置验证失败'}`, 'error');
     btn.disabled = false;
     showToast(v?.message || '配置验证失败', 'error');
   }
@@ -265,7 +376,7 @@ const renderFetch = (container) => {
         <div class="label">${state.collectionFilter ? '▼ 合集（点击显示全部）' : '合集'}</div>
       </div>
     </div>
-    <div class="card" style="max-height:500px;overflow-y:auto;position:relative;isolation:isolate">
+    <div class="card" style="max-height:500px;overflow-y:auto;position:relative;z-index:0">
       ${state.collectionFilter ? '<div style="padding:8px 0;font-size:12px;color:#d29922">仅显示合集种子（共 ' + collCount + ' 个）</div>' : ''}
       <table><thead><tr><th style="min-width:350px">名称</th><th>分类</th><th>大小</th><th>类型</th></tr></thead>
       <tbody>${filtered.map(t => `<tr><td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${t.name}">${t.name}</td><td><span class="tag tag-blue">${t.category}</span></td><td>${fmtSize(t.size)}</td><td>${t.is_collection ? '<span class="tag tag-gold">合集</span>' : '<span class="tag tag-gray">单集</span>'}</td></tr>`).join('')}</tbody>
@@ -302,14 +413,12 @@ const renderTmdb = (container) => {
       torrent_hash: t.hash, torrent_name: t.name, category: t.category,
       parsed_title: match.parsed_title || '', parsed_year: match.parsed_year || '',
       tmdb_id: match.tmdb_id || '', tmdb_title_cn: match.tmdb_title_cn || '',
-      tmdb_title_en: match.tmdb_title_en || '', tmdb_year: match.tmdb_year || '', is_collection: t.is_collection,
+      tmdb_title_en: match.tmdb_title_en || '', tmdb_year: match.tmdb_year || '', tmdb_rating: match.tmdb_rating || '', is_collection: t.is_collection,
     };
-  });
+  }).filter(m => !m.is_collection); // 合集种子不参与匹配，不显示在列表中
   const totalSeeds = displayList.length;
-  const protected = displayList.filter(m => m.tmdb_id === 'protected:collection' || m.is_collection).length;
-  const toMatch = totalSeeds - protected;
-  const matched = displayList.filter(m => m.tmdb_id && m.tmdb_id !== 'protected:collection' && m.tmdb_id !== '').length;
-  const unmatched = toMatch - matched;
+  const matched = displayList.filter(m => m.tmdb_id && m.tmdb_id !== '').length;
+  const unmatched = totalSeeds - matched;
   const hasData = displayList.length > 0;
   const filtered = state.tmdbFilter ? displayList.filter(m => !m.tmdb_id || m.tmdb_id === '') : displayList;
   container.innerHTML = `
@@ -325,32 +434,29 @@ const renderTmdb = (container) => {
     </div>
     ${hasData ? `
     <div class="stats-row" id="tmdb-stats">
-      <div class="stat-card"><div class="num">${toMatch}</div><div class="label">需匹配</div></div>
+      <div class="stat-card"><div class="num">${totalSeeds}</div><div class="label">需匹配</div></div>
       <div class="stat-card"><div class="num" style="color:#3fb950">${matched}</div><div class="label">已匹配</div></div>
       <div class="stat-card" style="cursor:pointer" onclick="toggleTmdbFilter()">
         <div class="num" style="color:${state.tmdbFilter ? '#f85149' : '#8b949e'}">${unmatched}</div>
         <div class="label">${state.tmdbFilter ? '▼ 未匹配（点击显示全部）' : '未匹配'}</div>
       </div>
-      <div class="stat-card"><div class="num" style="color:#d29922">${protected}</div><div class="label">合集保护</div></div>
     </div>
-    <div class="card" style="max-height:600px;overflow-y:auto;position:relative;isolation:isolate">
+    <div class="card" style="max-height:600px;overflow-y:auto;position:relative">
       ${state.tmdbFilter ? '<div style="padding:8px 0;font-size:12px;color:#f85149">仅显示未匹配种子，可手动填写 TMDB ID</div>' : ''}
-      <table><thead><tr><th>状态</th><th style="min-width:350px">种子名</th><th>TMDB ID</th><th>中文名</th><th>年代</th></tr></thead>
+      <table><thead><tr><th>状态</th><th style="min-width:300px">种子名</th><th>TMDB ID</th><th style="max-width:120px">中文名</th><th>年代</th><th>评分</th></tr></thead>
       <tbody id="tmdb-tbody">${filtered.map(m => {
-        const status = m.tmdb_id && m.tmdb_id.startsWith('protected:') ? '🛡️'
-          : m.tmdb_id ? '✅'
-          : state.busy ? '⏳' : '⬜';
+        const status = m.tmdb_id ? '✅' : (state.busy ? '⏳' : '⬜');
+        const rating = m.tmdb_rating ? `<span class="tag ${parseFloat(m.tmdb_rating) >= 7 ? 'tag-green' : parseFloat(m.tmdb_rating) >= 5 ? 'tag-gold' : 'tag-red'}">${m.tmdb_rating}</span>` : '-';
         return `<tr id="row-${m.torrent_hash}">
           <td style="text-align:center;font-size:16px">${status}</td>
-          <td title="${m.torrent_name}" style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.torrent_name}</td>
-          <td>${m.tmdb_id && !m.tmdb_id.startsWith('protected:')
-            ? `<span class="tag tag-green">${m.tmdb_id}</span>`
-            : m.tmdb_id && m.tmdb_id.startsWith('protected:')
-              ? '<span class="tag tag-gold">合集保护</span>'
-              : `<div style="display:flex;gap:4px;align-items:center"><input id="mid-${m.torrent_hash}" placeholder="填写ID" style="width:80px;padding:3px 6px;border:1px solid #30363d;border-radius:4px;background:#0d1117;color:#e1e4e8;font-size:12px"><button class="btn btn-sm" onclick="saveManualId('${m.torrent_hash}')">确认</button></div>`}
+          <td title="${m.torrent_name}" style="max-width:350px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.torrent_name}</td>
+          <td>${m.tmdb_id
+            ? `<div style="display:flex;gap:4px;align-items:center"><span class="tag tag-green" style="cursor:pointer" onclick="editTmdbId('${m.torrent_hash}')" id="tid-${m.torrent_hash}">${m.tmdb_id} ✏️</span></div>`
+            : `<div style="display:flex;gap:4px;align-items:center"><input id="mid-${m.torrent_hash}" placeholder="填写ID" style="width:80px;padding:3px 6px;border:1px solid #30363d;border-radius:4px;background:#0d1117;color:#e1e4e8;font-size:12px"><button class="btn btn-sm" onclick="saveManualId('${m.torrent_hash}')">确认</button></div>`}
           </td>
-          <td>${m.tmdb_title_cn||'-'}</td>
-          <td>${m.tmdb_year||m.parsed_year||m.torrent_name.match(/\b(19\d{2}|20\d{2})\b/)?.[0]||'-'}</td>
+          <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.tmdb_title_cn||'-'}</td>
+          <td>${m.tmdb_year||m.parsed_year||m.torrent_name.match(/\b(19\d{2}|20\d{2})\b/g)?.slice(-1)[0]||'-'}</td>
+          <td>${rating}</td>
         </tr>`;
       }).join('')}</tbody></table>
     </div>` : ''}`
@@ -382,13 +488,34 @@ window.saveManualId = async (hash) => {
   if (!info || info.status !== 'ok') { showToast(`❌ ${info?.error || '未找到该电影'}`, 'error'); return; }
   // 保存到匹配结果
   const d = await api('/api/tmdb/update', { method: 'POST', body: JSON.stringify({
-    torrent_hash: hash, tmdb_id: id, tmdb_title_cn: info.tmdb_title_cn, tmdb_title_en: info.tmdb_title_en }) });
+    torrent_hash: hash, tmdb_id: id, tmdb_title_cn: info.tmdb_title_cn,
+    tmdb_title_en: info.tmdb_title_en, tmdb_rating: info.tmdb_rating || '' }) });
   if (d && d.status === 'ok') {
     showToast(`✅ 已匹配: ${info.tmdb_title_cn}`, 'success');
     const r = await api('/api/tmdb/results');
     if (r) state.matches = r.matches;
     renderTmdb(document.getElementById('content'));
   } else { showToast(`❌ ${d?.error || '更新失败'}`, 'error'); }
+};
+
+window.editTmdbId = (hash) => {
+  const el = document.getElementById('tid-' + hash);
+  if (!el) return;
+  const currentId = el.textContent.replace(' ✏️', '').trim();
+  // 将标签替换为输入框
+  el.outerHTML = `<div style="display:flex;gap:4px;align-items:center" id="tid-${hash}">
+    <input id="mid-${hash}" value="${currentId}" placeholder="填写ID" style="width:80px;padding:3px 6px;border:1px solid #58a6ff;border-radius:4px;background:#0d1117;color:#e1e4e8;font-size:12px">
+    <button class="btn btn-sm" onclick="saveManualId('${hash}')">确认</button>
+    <button class="btn btn-sm" onclick="cancelEditTmdbId('${hash}', '${currentId}')">取消</button>
+  </div>`;
+};
+
+window.cancelEditTmdbId = (hash, currentId) => {
+  const el = document.getElementById('tid-' + hash);
+  if (!el) return;
+  el.outerHTML = `<div style="display:flex;gap:4px;align-items:center" id="tid-${hash}">
+    <span class="tag tag-green" style="cursor:pointer" onclick="editTmdbId('${hash}')">${currentId} ✏️</span>
+  </div>`;
 };
 
 window.startTmdb = async () => {
@@ -405,6 +532,23 @@ window.startTmdb = async () => {
 // ═══════════════════════════════════════════════════════════════
 const renderAnalyze = (container) => {
   const count = state.profiles.length;
+  // 构建 match 查找表（torrent_hash -> match）
+  const matchMap = {};
+  state.matches.forEach(m => { matchMap[m.torrent_hash] = m; });
+
+  const profileList = state.profiles.filter(p => !p.is_collection).map(p => {
+    const match = matchMap[p.torrent_hash] || {};
+    return {
+      ...p,
+      tmdb_title_cn: match.tmdb_title_cn || '',
+      tmdb_year: match.tmdb_year || p.year || '',
+      tmdb_rating: match.tmdb_rating || '',
+    };
+  });
+
+  const atmosCount = profileList.filter(p => p.audio_level === 'chinese_atmos').length;
+  const dvCount = profileList.filter(p => p.hdr_level && p.hdr_level.startsWith('dv')).length;
+
   container.innerHTML = `
     <h2>🔍 深度分析</h2>
     <p class="desc">通过 SMB 挂载读取视频文件，MediaInfo 提取音轨、字幕、HDR 信息</p>
@@ -418,8 +562,48 @@ const renderAnalyze = (container) => {
     </div>
     ${count > 0 ? `<div class="stats-row">
       <div class="stat-card"><div class="num">${count}</div><div class="label">视频文件</div></div>
-      <div class="stat-card"><div class="num" style="color:#3fb950">${state.profiles.filter(p => p.audio_level === 'chinese_atmos').length}</div><div class="label">中文全景声</div></div>
-      <div class="stat-card"><div class="num" style="color:#d29922">${state.profiles.filter(p => p.hdr_level.startsWith('dv')).length}</div><div class="label">杜比视界</div></div>
+      <div class="stat-card"><div class="num" style="color:#3fb950">${atmosCount}</div><div class="label">中文全景声</div></div>
+      <div class="stat-card"><div class="num" style="color:#d29922">${dvCount}</div><div class="label">杜比视界</div></div>
+    </div>
+    <div class="card" style="max-height:700px;overflow-y:auto;position:relative">
+      ${profileList.map(p => {
+        const rating = p.tmdb_rating ? `<span class="tag ${parseFloat(p.tmdb_rating) >= 7 ? 'tag-green' : parseFloat(p.tmdb_rating) >= 5 ? 'tag-gold' : 'tag-red'}">${p.tmdb_rating}</span>` : '';
+        const collTag = p.is_collection ? '<span class="tag tag-gold" style="margin-left:6px">合集</span>' : '';
+        // 音轨标签
+        const audioTag = p.audio_detail
+          ? `<span class="tag ${p.audio_level === 'chinese_atmos' ? 'tag-green' : 'tag-blue'}">${p.audio_detail}</span>`
+          : '<span class="tag tag-gray">未知</span>';
+        // 字幕标签
+        const subTag = p.subtitle_detail
+          ? `<span class="tag tag-blue">${p.subtitle_detail}</span>`
+          : '<span class="tag tag-gray">无</span>';
+        // 来源标签
+        const srcTag = `<span class="tag tag-blue">${p.source_detail || p.source || '未知'}</span>`;
+        // 分辨率标签
+        const resTag = `<span class="tag tag-blue">${p.resolution_detail || p.resolution || '未知'}</span>`;
+        // HDR 标签
+        const hdrTag = p.hdr_level && p.hdr_level !== 'sdr'
+          ? `<span class="tag tag-gold">${p.hdr_detail || p.hdr_level}</span>`
+          : '<span class="tag tag-gray">SDR</span>';
+
+        return `<div class="profile-item">
+          <div class="profile-row1">
+            <span class="profile-name" title="${p.torrent_name}">${p.torrent_name}</span>
+            ${(p.tags || []).map(tag => `<span class="tag ${tag === '全景声' ? 'tag-green' : tag === '特效' ? 'tag-gold' : 'tag-blue'}">${tag}</span>`).join('')}
+            <span class="profile-title">${p.tmdb_title_cn || p.title || '-'}</span>
+            <span class="profile-year">${p.tmdb_year || p.year || '-'}</span>
+            ${rating ? `<span class="profile-rating">${rating}</span>` : ''}
+            ${collTag}
+          </div>
+          <div class="profile-row2">
+            <span class="profile-label">音频</span> ${audioTag}
+            <span class="profile-label">字幕</span> ${subTag}
+            <span class="profile-label">来源</span> ${srcTag}
+            <span class="profile-label">分辨率</span> ${resTag}
+            <span class="profile-label">HDR</span> ${hdrTag}
+          </div>
+        </div>`;
+      }).join('')}
     </div>` : ''}`;
 };
 
@@ -438,16 +622,16 @@ window.startAnalyze = async () => {
 // ═══════════════════════════════════════════════════════════════
 const DEFAULT_PRIORITY = {
   layers: ['audio','subtitle','source','resolution','hdr'],
-  audio: ['chinese_atmos','chinese_audio','english_atmos','english_audio','other'],
-  subtitle: ['chinese_forced','chinese_sub','english_forced','english_sub','none'],
+  audio: ['chinese_atmos','chinese_audio','english_atmos','english_audio','none'],
+  subtitle: ['chinese_forced','chinese_sub','none'],
   source: ['bluray','webdl','other'],
   resolution: ['2160p','1080p','other'],
   hdr: ['dv_p7','dv_p8','dv_p5','hdr10plus','hdr10','sdr'],
 };
 
 const PRIORITY_LABELS = {
-  audio: { chinese_atmos:'中文全景声', chinese_audio:'中文音轨', english_atmos:'英文全景声', english_audio:'英文音轨', other:'其他音轨' },
-  subtitle: { chinese_forced:'中文特效字幕', chinese_sub:'中文字幕', english_forced:'英文特效字幕', english_sub:'英文字幕', none:'无字幕' },
+  audio: { chinese_atmos:'国语全景声', chinese_audio:'国语', english_atmos:'英语全景声', english_audio:'英语', none:'其他音轨' },
+  subtitle: { chinese_forced:'中文特效字幕', chinese_sub:'中文字幕', none:'其他字幕' },
   source: { bluray:'BluRay', webdl:'WEB-DL', other:'其他来源' },
   resolution: { '2160p':'4K', '1080p':'1080p', other:'其他分辨率' },
   hdr: { dv_p7:'杜比视界 P7', dv_p8:'杜比视界 P8', dv_p5:'杜比视界 P5', hdr10plus:'HDR10+', hdr10:'HDR10', sdr:'SDR' },
@@ -455,7 +639,22 @@ const PRIORITY_LABELS = {
 
 let priorityState = JSON.parse(JSON.stringify(DEFAULT_PRIORITY));
 
-const renderDedup = (container) => {
+// 从后端配置恢复优先级设置
+async function loadPriorityConfig() {
+  if (!state.config) {
+    const d = await api('/api/config');
+    if (d) state.config = d.config;
+  }
+  if (state.config) {
+    if (state.config.priority_layers) priorityState.layers = state.config.priority_layers;
+    ['audio', 'subtitle', 'source', 'resolution', 'hdr'].forEach(layer => {
+      if (state.config[layer]) priorityState[layer] = state.config[layer];
+    });
+  }
+}
+
+const renderDedup = async (container) => {
+  await loadPriorityConfig();
   container.innerHTML = `
     <h2>🎯 去重筛选</h2>
     <p class="desc">配置优先级规则后执行去重操作</p>
@@ -476,6 +675,13 @@ const renderDedup = (container) => {
 
 const LAYER_LABELS = { audio:'音轨', subtitle:'字幕', source:'来源', resolution:'分辨率', hdr:'HDR类型' };
 
+// 保存优先级配置到后端
+async function savePriorityConfig() {
+  const cfg = { priority_layers: priorityState.layers };
+  priorityState.layers.forEach(layer => { cfg[layer] = priorityState[layer]; });
+  await api('/api/config', { method: 'PUT', body: JSON.stringify(cfg) });
+}
+
 const renderPriorityCards = () => {
   const el = document.getElementById('priority-layers');
   if (!el) return;
@@ -483,11 +689,9 @@ const renderPriorityCards = () => {
     const items = priorityState[layer] || [];
     return `<div class="card" style="flex:1;min-width:160px;padding:12px;margin:0">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <button class="btn btn-sm" onclick="moveLayer(${li},-1)" ${li===0?'disabled':''} style="padding:4px 8px;font-size:14px">&#x25C0;</button>
         <span style="font-weight:600;font-size:13px;color:#f0f6fc">${LAYER_LABELS[layer]||layer}</span>
-        <div style="display:flex;gap:4px">
-          <button class="btn btn-sm" onclick="moveLayer(${li},-1)" ${li===0?'disabled':''}>&#x25B2;</button>
-          <button class="btn btn-sm" onclick="moveLayer(${li},1)" ${li===priorityState.layers.length-1?'disabled':''}>&#x25BC;</button>
-        </div>
+        <button class="btn btn-sm" onclick="moveLayer(${li},1)" ${li===priorityState.layers.length-1?'disabled':''} style="padding:4px 8px;font-size:14px">&#x25B6;</button>
       </div>
       <div style="display:flex;flex-direction:column;gap:3px">
         ${items.map((item, ii) => `<div class="priority-item" style="display:flex;align-items:center;justify-content:space-between;padding:4px 6px;background:#0d1117;border-radius:4px;font-size:12px;color:#c9d1d9">
@@ -507,6 +711,7 @@ window.moveLayer = (idx, dir) => {
   if (newIdx < 0 || newIdx >= priorityState.layers.length) return;
   [priorityState.layers[idx], priorityState.layers[newIdx]] = [priorityState.layers[newIdx], priorityState.layers[idx]];
   renderPriorityCards();
+  savePriorityConfig();
 };
 
 window.moveItem = (layer, idx, dir) => {
@@ -514,6 +719,7 @@ window.moveItem = (layer, idx, dir) => {
   if (newIdx < 0 || newIdx >= priorityState[layer].length) return;
   [priorityState[layer][idx], priorityState[layer][newIdx]] = [priorityState[layer][newIdx], priorityState[layer][idx]];
   renderPriorityCards();
+  savePriorityConfig();
 };
 
 const renderDedupResults = () => {
@@ -540,11 +746,13 @@ const renderDupGroup = (g) => {
     const actualKeep = state.keepOverrides[key] !== undefined ? state.keepOverrides[key] : isKeep;
     return `<div class="dup-item ${actualKeep ? 'keep' : 'delete'}">
       <span class="dup-badge ${actualKeep ? 'keep' : 'delete'}">${actualKeep ? '保留' : '删除'}</span>
-      <div class="dup-info"><div class="name" title="${p.torrent_name}">${p.torrent_name}</div>
+      <div class="dup-info"><div class="name" title="${p.torrent_name}">${p.torrent_name}
+        ${(p.tags || []).map(tag => `<span class="tag ${tag === '全景声' ? 'tag-green' : tag === '特效' ? 'tag-gold' : 'tag-blue'}" style="margin-left:4px">${tag}</span>`).join('')}
+      </div>
         <div class="meta">${p.audio_detail ? `<span class="tag tag-green">${p.audio_detail}</span>` : ''}
           ${p.subtitle_detail ? `<span class="tag tag-gold">${p.subtitle_detail}</span>` : ''}
           <span class="tag tag-blue">${p.source_detail}</span><span class="tag tag-blue">${p.resolution_detail}</span>
-          <span class="tag ${p.hdr_level.startsWith('dv') ? 'tag-gold' : 'tag-gray'}">${p.hdr_detail}</span>
+          <span class="tag ${p.hdr_level && p.hdr_level.startsWith('dv') ? 'tag-gold' : 'tag-gray'}">${p.hdr_detail || 'SDR'}</span>
           ${p.is_collection ? '<span class="tag tag-red">合集</span>' : ''}
         </div><div class="meta" style="color:#6e7681">${p.category} · ${fmtSize(p.file_size)}</div></div>
       <span class="dup-switch" onclick="toggleKeep('${key}', ${!actualKeep})">切换</span>
@@ -562,9 +770,25 @@ window.runDedup = async () => {
   state.keepOverrides = {};
   document.getElementById('btn-dedup').disabled = true;
   document.querySelector('.task-status').textContent = '计算中...';
+  state.busy = true;
   startPolling();
-  const d = await api('/api/dedup/run', { method: 'POST' });
-  if (!d || d.status !== 'ok') { document.getElementById('btn-dedup').disabled = false; showToast(d?.error || '去重失败', 'error'); }
+  // 发送当前优先级配置到后端
+  const d = await api('/api/dedup/run', {
+    method: 'POST',
+    body: JSON.stringify({
+      priority_layers: priorityState.layers,
+      priority_order: (() => {
+        const order = {};
+        priorityState.layers.forEach(layer => { order[layer] = priorityState[layer]; });
+        return order;
+      })(),
+    }),
+  });
+  if (!d || d.status !== 'ok') {
+    document.getElementById('btn-dedup').disabled = false;
+    state.busy = false;
+    showToast(d?.error || '去重失败', 'error');
+  }
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -638,15 +862,31 @@ window.confirmDelete = async () => {
 };
 
 // ═══════════════════════════════════════════════════════════════
-// 初始化 - 重置缓存，恢复上次步骤
+// 初始化 - 从后端恢复持久化状态
 // ═══════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', async () => {
-  // 清除服务端缓存数据
-  await api('/api/reset', { method: 'POST' });
-  // 从 sessionStorage 恢复上一次的步骤
-  const savedStep = parseInt(sessionStorage.getItem('qb_step') || '0');
-  switchStep(Math.min(savedStep, 5));
-  // 切换步骤时保存到 sessionStorage
+  const restored = await api('/api/state/restore');
+  if (restored && restored.has_data) {
+    state.torrents = restored.torrents || [];
+    state.matches = restored.tmdb_matches || [];
+    state.profiles = restored.profiles || [];
+    state.dedup = restored.dedup_results || [];
+    // 加载配置（用于优先级规则等）
+    const cfg = await api('/api/config');
+    if (cfg) state.config = cfg.config;
+    const savedStep = parseInt(sessionStorage.getItem('qb_step') || restored.current_step || '0');
+    state.step = Math.min(savedStep, 5);
+    document.querySelectorAll('.step').forEach((e, i) => e.className = 'step' + (i === state.step ? ' active' : ''));
+    await renderContent();
+    // 更新进度
+    if (restored.progress && restored.progress.total > 0) {
+      setStatus(restored.progress.message, false);
+    }
+  } else {
+    // 没有持久化数据，显示配置页
+    switchStep(0);
+  }
+  // 切换步骤时保存步骤到 sessionStorage
   const origSwitch = window.switchStep;
   window.switchStep = async (idx) => {
     sessionStorage.setItem('qb_step', String(idx));

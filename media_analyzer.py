@@ -176,51 +176,242 @@ def _detect_hdr_level(video_tracks: list) -> tuple[str, str]:
     return "sdr", "SDR"
 
 
+def _get_lang_label(track: dict) -> str:
+    """Get language label for display."""
+    lang = (track.get("Language") or "").lower()
+    title = (track.get("Title") or "").lower()
+
+    lang_map = {
+        "zh": "国语", "chi": "国语", "cn": "国语", "zho": "国语", "zh-cn": "国语", "zh-tw": "国语",
+        "cmn": "国语",
+        "en": "英语", "eng": "英语", "en-us": "英语", "en-us-en": "英语",
+        "ja": "日语", "jpn": "日语",
+        "ko": "韩语", "kor": "韩语",
+        "fr": "法语", "fre": "法语", "fra": "法语",
+        "de": "德语", "ger": "德语", "deu": "德语",
+        "es": "西班牙语", "spa": "西班牙语",
+        "it": "意大利语", "ita": "意大利语",
+        "ru": "俄语", "rus": "俄语",
+    }
+
+    # 先从 Language 字段识别
+    if lang in lang_map:
+        return lang_map[lang]
+
+    # Language 字段为空或无法识别时，从 Title 字段提取
+    if title:
+        # 中文标题关键词
+        if any(kw in title for kw in ["国语", "中文", "汉语", "普通话", "国配", "台配", "粤语", "mandarin", "chinese"]):
+            return "国语"
+        if any(kw in title for kw in ["英语", "english", "english-dts"]):
+            return "英语"
+        if any(kw in title for kw in ["日语", "japanese"]):
+            return "日语"
+        if any(kw in title for kw in ["韩语", "韩语", "korean"]):
+            return "韩语"
+        if any(kw in title for kw in ["法语", "french"]):
+            return "法语"
+        if any(kw in title for kw in ["德语", "german"]):
+            return "德语"
+        if any(kw in title for kw in ["西班牙", "spanish"]):
+            return "西班牙语"
+
+    if lang:
+        return lang.upper()
+    return "未知"
+
+
+def _is_atmos_track(track: dict) -> bool:
+    """Check if a single audio track has Atmos."""
+    atmos_keywords = ["atmos", "joc", "object based"]
+    check_fields = [
+        (track.get("Format_Commercial_IfAny") or "").lower(),
+        (track.get("Format_AdditionalFeatures") or "").lower(),
+        (track.get("Format_profile") or "").lower(),
+        (track.get("Format_Settings") or "").lower(),
+        (track.get("Title") or "").lower(),
+    ]
+    for field in check_fields:
+        f_str = " ".join(field) if isinstance(field, list) else str(field)
+        if any(kw in f_str for kw in atmos_keywords):
+            return True
+    # 检查 extra 字段中的 NumberOfDynamicObjects（Atmos 对象数 > 0 表示有 Atmos）
+    extra = track.get("extra") or {}
+    if extra.get("NumberOfDynamicObjects"):
+        try:
+            if int(extra["NumberOfDynamicObjects"]) > 0:
+                return True
+        except (ValueError, TypeError):
+            pass
+    return False
+
+
+def _format_audio_track(track: dict) -> str:
+    """Format a single audio track into a human-readable string."""
+    lang_label = _get_lang_label(track)
+    codec = (track.get("Format") or "").lower()
+    commercial = (track.get("Format_Commercial_IfAny") or "").lower()
+    profile = (track.get("Format_profile") or "").lower()
+    title = (track.get("Title") or "").lower()
+
+    # === 格式识别 ===
+    if codec == "mlp fba":
+        codec_label = "TrueHD"
+    elif codec == "truehd":
+        codec_label = "TrueHD"
+    elif codec == "e-ac-3":
+        codec_label = "DDP" if commercial else "E-AC-3"
+    elif codec == "ac-3":
+        codec_label = "Dolby Digital" if commercial else "AC-3"
+    elif codec == "dts":
+        if "master" in commercial or "ma" in profile:
+            codec_label = "DTS-HD MA"
+        elif "x" in profile or "dts-x" in title or "dts:x" in title:
+            codec_label = "DTS:X"
+        else:
+            codec_label = "DTS"
+    elif codec == "flac":
+        codec_label = "FLAC"
+    elif codec == "pcm":
+        codec_label = "LPCM"
+    elif codec == "aac":
+        codec_label = "AAC"
+    elif codec == "opus":
+        codec_label = "Opus"
+    elif codec == "mp3":
+        codec_label = "MP3"
+    else:
+        codec_label = commercial.title() if commercial else codec.upper()
+
+    # === Atmos 检测 ===
+    is_atmos = _is_atmos_track(track)
+
+    # === 声道格式化（正确字段名：Channels） ===
+    channels_raw = track.get("Channels", "?")
+    if channels_raw and channels_raw != "?":
+        m = re.search(r'(\d+(?:\.\d+)?)', str(channels_raw))
+        chan = m.group(1) if m else "?"
+    else:
+        chan = "?"
+
+    if chan != "?":
+        try:
+            c = float(chan)
+            if c == 6:
+                chan_str = "5.1"
+            elif c == 8:
+                chan_str = "7.1"
+            elif c == 2:
+                chan_str = "2.0"
+            elif c == 1:
+                chan_str = "1.0"
+            elif c == 4:
+                chan_str = "4.0"
+            elif c == 10:
+                chan_str = "9.1.6" if is_atmos else "9.1"
+            elif c == 12:
+                chan_str = "7.1.4" if is_atmos else "11.1"
+            elif c == 16:
+                chan_str = "9.1.6" if is_atmos else "15.1"
+            elif c == 24:
+                chan_str = "11.1.12" if is_atmos else "23.1"
+            else:
+                chan_str = f"{int(c)}.0" if c == int(c) else str(chan)
+        except (ValueError, TypeError):
+            chan_str = str(chan)
+    else:
+        chan_str = "?"
+
+    if is_atmos:
+        return f"{lang_label} {codec_label} Atmos {chan_str}"
+    else:
+        return f"{lang_label} {codec_label} {chan_str}"
+
+
 def _detect_audio_level(audio_tracks: list) -> tuple[str, str]:
-    """Detect Chinese audio from audio tracks."""
+    """Detect audio level from audio tracks. Returns (level, detail)."""
+    if not audio_tracks:
+        return "none", ""
+
+    # 找到第一个音轨（默认音轨）和中文音轨
+    first_track = audio_tracks[0]
+    chinese_track = None
+
     for track in audio_tracks:
         lang = (track.get("Language") or "").lower()
-        codec = (track.get("Format") or "").lower()
-        commercial = (track.get("Commercial_name") or "").lower()
+        title = (track.get("Title") or "").lower()
+        chinese_codes = ("zh", "chi", "cn", "zho", "zh-cn", "zh-tw", "cmn")
+        chinese_title_kw = ("国语", "中文", "汉语", "普通话", "国配", "台配", "粤语", "mandarin", "chinese")
+        if lang in chinese_codes or any(kw in title for kw in chinese_title_kw):
+            chinese_track = track
+            break
 
-        is_chinese = lang in ("zh", "chi", "cn", "zho", "zh-cn", "zh-tw")
-        if not is_chinese:
-            continue
+    # 构建显示字符串
+    if chinese_track and chinese_track != first_track:
+        # 同时显示第一个音轨和中文音轨（用 " | " 分隔）
+        detail = f"{_format_audio_track(first_track)} | {_format_audio_track(chinese_track)}"
+    elif chinese_track:
+        # 中文音轨就是第一个音轨，只显示一次
+        detail = _format_audio_track(chinese_track)
+    else:
+        # 没有中文音轨，只显示第一个音轨的信息
+        detail = _format_audio_track(first_track)
 
-        is_atmos = "atmos" in commercial.lower()
+    # 检查中文音轨和 Atmos
+    has_atmos = any(_is_atmos_track(t) for t in audio_tracks)
+    has_chinese = any(
+        (t.get("Language") or "").lower() in ("zh", "chi", "cn", "zho", "zh-cn", "zh-tw", "cmn")
+        or any(kw in (t.get("Title") or "").lower() for kw in ("国语", "中文", "汉语", "普通话", "国配", "台配", "粤语", "mandarin", "chinese"))
+        for t in audio_tracks
+    )
 
-        if is_atmos:
-            return "chinese_atmos", f"国语 {commercial} Atmos"
-        else:
-            channels = track.get("Channel(s)", "?")
-            return "chinese_audio", f"国语 {commercial or codec} {channels}ch"
+    if has_chinese and has_atmos:
+        return "chinese_atmos", detail
+    elif has_chinese:
+        return "chinese_audio", detail
+    elif has_atmos:
+        # 没有中文但有全景声
+        return "english_atmos", detail
+    else:
+        return "english_audio", detail
 
-    return "none", ""
 
-
-def _detect_subtitle_level(text_tracks: list) -> tuple[str, str]:
-    """Detect Chinese subtitle from text tracks."""
+def _detect_subtitle_level(text_tracks: list, seed_name: str = "") -> tuple[str, str]:
+    """Detect Chinese subtitle from text tracks. Returns (level, detail)."""
     has_forced = False
     has_normal = False
     forced_detail = ""
     normal_detail = ""
 
+    # 种子名中包含"特效字幕"或"特效"关键词
+    seed_has_special_effect = "特效字幕" in seed_name or "特效" in seed_name
+
     for track in text_tracks:
         lang = (track.get("Language") or "").lower()
         codec = (track.get("Format") or "").lower()
         forced = (track.get("Forced") or "").lower()
+        title = (track.get("Title") or "")
 
-        is_chinese = lang in ("zh", "chi", "cn", "zho", "zh-cn", "zh-tw")
+        is_chinese = lang in ("zh", "chi", "cn", "zho", "zh-cn", "zh-tw", "cmn")
+        if not is_chinese and any(kw in title.lower() for kw in ["国语", "中文", "汉语", "普通话", "chinese", "mandarin"]):
+            is_chinese = True
         if not is_chinese:
             continue
 
         is_advanced = codec in ("ass", "ssa", "pgs")
         is_forced = forced in ("yes", "true")
 
+        # 特效字幕判定：种子名含"特效"关键词 + Title含"特效" + ASS/PGS格式
+        is_special_effect = (
+            seed_has_special_effect
+            and "特效" in title
+            and is_advanced
+        )
+
         if is_forced:
             has_forced = True
             forced_detail = f"中文强制 ({codec.upper()})"
-        elif is_advanced:
+        elif is_special_effect:
             has_forced = True
             forced_detail = f"中文特效 ({codec.upper()})"
         else:
@@ -438,6 +629,7 @@ def _analyze_single_video_file(torrent: dict, vf: dict, mount_point: str, save_p
         mp.audio_detail = cached.get("audio_detail", "")
         mp.subtitle_detail = cached.get("subtitle_detail", "")
         mp.hdr_detail = cached.get("hdr_detail", "")
+        mp.tags = cached.get("tags", [])
         return mp
 
     # Run MediaInfo
@@ -461,7 +653,17 @@ def _analyze_single_video_file(torrent: dict, vf: dict, mount_point: str, save_p
 
         mp.hdr_level, mp.hdr_detail = _detect_hdr_level(video_tracks)
         mp.audio_level, mp.audio_detail = _detect_audio_level(audio_tracks)
-        mp.subtitle_level, mp.subtitle_detail = _detect_subtitle_level(text_tracks)
+        mp.subtitle_level, mp.subtitle_detail = _detect_subtitle_level(text_tracks, seed_name)
+
+        # 构建标签
+        tags = []
+        if any(_is_atmos_track(t) for t in audio_tracks):
+            tags.append("全景声")
+        if mp.subtitle_level == "chinese_sub":
+            tags.append("中字")
+        elif mp.subtitle_level == "chinese_forced":
+            tags.append("特效")
+        mp.tags = tags
 
         # Write cache
         try:
@@ -473,6 +675,7 @@ def _analyze_single_video_file(torrent: dict, vf: dict, mount_point: str, save_p
                 "audio_detail": mp.audio_detail,
                 "subtitle_detail": mp.subtitle_detail,
                 "hdr_detail": mp.hdr_detail,
+                "tags": mp.tags,
             })
         except OSError:
             pass

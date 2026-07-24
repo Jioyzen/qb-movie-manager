@@ -87,9 +87,10 @@ body {
 
 /* ─── Tables ───────────────────────────────────────────────── */
 table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #21262d; font-size: 13px; }
-th { color: #8b949e; font-weight: 500; position: sticky; top: 0; background: #161b22; z-index: 100; }
-td { color: #c9d1d9; }
+th, td { text-align: left; padding: 8px 12px; font-size: 13px; }
+th { color: #8b949e; font-weight: 500; background: #161b22; }
+td { color: #c9d1d9; border-bottom: 1px solid #21262d; }
+th { border-bottom: 1px solid #30363d; }
 tr:hover td { background: rgba(255,255,255,0.02); }
 
 /* ─── Progress ─────────────────────────────────────────────── */
@@ -130,6 +131,32 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 .dup-switch { cursor: pointer; color: #58a6ff; font-size: 12px; flex-shrink: 0; }
 .dup-switch:hover { text-decoration: underline; }
 
+/* ─── Profile list (深度分析) ─────────────────────────────── */
+.profile-item {
+  padding: 10px 14px; border-bottom: 1px solid #21262d;
+}
+.profile-item:last-child { border-bottom: none; }
+.profile-row1 {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap;
+}
+.profile-name {
+  font-size: 13px; color: #c9d1d9; max-width: 350px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 1;
+}
+.profile-title {
+  font-size: 12px; color: #58a6ff; max-width: 150px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.profile-year { font-size: 12px; color: #8b949e; }
+.profile-rating { font-size: 12px; }
+.profile-row2 {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.profile-label {
+  font-size: 11px; color: #6e7681; margin-left: 4px;
+}
+.profile-label:first-child { margin-left: 0; }
+
 /* ─── Stats ────────────────────────────────────────────────── */
 .stats-row { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
 .stat-card {
@@ -149,6 +176,10 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 .tag-blue { background: rgba(88,166,255,0.15); color: #58a6ff; }
 .tag-red { background: rgba(248,81,73,0.15); color: #f85149; }
 .tag-gray { background: rgba(139,148,158,0.15); color: #8b949e; }
+
+/* ─── Config message ───────────────────────────────────────── */
+#config-msg.error { display:block; background:rgba(248,81,73,0.1); border:1px solid rgba(248,81,73,0.3); color:#f85149; }
+#config-msg.success { display:block; background:rgba(63,185,80,0.1); border:1px solid rgba(63,185,80,0.3); color:#3fb950; }
 
 /* ─── Toast ────────────────────────────────────────────────── */
 .toast {

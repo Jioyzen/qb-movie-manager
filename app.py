@@ -36,6 +36,59 @@ _task_state = {
     "lock": threading.Lock(),
 }
 
+# ─── 状态持久化 ───────────────────────────────────────────────
+
+STATE_FILE = os.path.join(BASE_DIR, "data", "state.json")
+
+def _save_state():
+    """将当前可序列化的状态保存到 JSON 文件。"""
+    with _task_state["lock"]:
+        _save_state_no_lock()
+
+
+def _save_state_no_lock():
+    """保存状态（调用方需持有 _task_state["lock"]）。"""
+    state = {
+        "current_step": _task_state["current_step"],
+        "progress": dict(_task_state["progress"]),
+        "torrents": list(_task_state["torrents"]),
+        "tmdb_matches": list(_task_state["tmdb_matches"]),
+        "profiles": [p.to_dict() for p in _task_state["profiles"]],
+        "dedup_results": list(_task_state["dedup_results"]),
+        "collection_flags": dict(_task_state["collection_flags"]),
+    }
+    try:
+        os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[state] Save error: {e}", flush=True)
+
+
+def _load_state():
+    """从 JSON 文件加载持久化状态到 _task_state。"""
+    if not os.path.exists(STATE_FILE):
+        return
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        with _task_state["lock"]:
+            _task_state["current_step"] = state.get("current_step", "")
+            _task_state["progress"] = state.get("progress", {"current": 0, "total": 0, "message": ""})
+            _task_state["torrents"] = state.get("torrents", [])
+            _task_state["tmdb_matches"] = state.get("tmdb_matches", [])
+            _task_state["profiles"] = [MediaProfile.from_dict(p) for p in state.get("profiles", [])]
+            _task_state["dedup_results"] = state.get("dedup_results", [])
+            _task_state["collection_flags"] = state.get("collection_flags", {})
+            _task_state["running"] = False
+            _task_state["paused"] = False
+        print(f"[state] Loaded from {STATE_FILE}", flush=True)
+    except Exception as e:
+        print(f"[state] Load error: {e}", flush=True)
+
+# 启动时加载持久化状态
+_load_state()
+
 # ─── 辅助函数 ───────────────────────────────────────────────
 
 def _mask_config(cfg: dict) -> dict:
@@ -59,6 +112,7 @@ def _background_task(step: str, func, *args, **kwargs):
                 _store_result(step, result)
                 _task_state["running"] = False
                 _task_state["progress"]["message"] = "完成"
+            _save_state()
         except Exception as e:
             import traceback
             with _task_state["lock"]:
@@ -154,6 +208,7 @@ def _update_collection_flags(torrents: list[dict]):
 
     with _task_state["lock"]:
         _task_state["collection_flags"] = flags
+        _save_state_no_lock()
 
 
 def is_collection(torrent_hash: str) -> bool:
@@ -395,21 +450,6 @@ def api_tmdb_match():
                 year = ""
 
                 if is_col and collection_strategy == "skip":
-                    entry = {
-                        "torrent_hash": t.get("hash", ""),
-                        "torrent_name": seed_name,
-                        "category": t.get("category", ""),
-                        "parsed_title": "",
-                        "parsed_year": "",
-                        "tmdb_id": "protected:collection",
-                        "tmdb_title_cn": "合集种子（保护）",
-                        "tmdb_title_en": "Collection (Protected)",
-                        "is_collection": True,
-                    }
-                    matches.append(entry)
-                    # 实时更新
-                    with _task_state["lock"]:
-                        _task_state["tmdb_matches"] = list(matches)
                     continue
 
                 parsed = parse_filename(seed_name)
@@ -419,6 +459,8 @@ def api_tmdb_match():
                 tmdb_id = ""
                 tmdb_title_cn = ""
                 tmdb_title_en = ""
+                tmdb_year = ""
+                tmdb_rating = ""
 
                 if title:
                     result = client.match_entry(seed_name, title, year)
@@ -427,6 +469,7 @@ def api_tmdb_match():
                         tmdb_title_cn = result["tmdb_title_cn"]
                         tmdb_title_en = result["tmdb_title_en"]
                         tmdb_year = result.get("tmdb_year", "")
+                        tmdb_rating = result.get("tmdb_rating", "")
             except Exception as e:
                 print(f"[tmdb] Error {t.get('name','')[:40]}: {e}", flush=True)
 
@@ -440,12 +483,14 @@ def api_tmdb_match():
                 "tmdb_title_cn": tmdb_title_cn if 'tmdb_title_cn' in dir() else "",
                 "tmdb_title_en": tmdb_title_en if 'tmdb_title_en' in dir() else "",
                 "tmdb_year": tmdb_year if 'tmdb_year' in dir() else "",
+                "tmdb_rating": tmdb_rating if 'tmdb_rating' in dir() else "",
                 "is_collection": is_col if 'is_col' in dir() else False,
             }
             matches.append(entry)
             # 每匹配一个就实时更新到全局状态
             with _task_state["lock"]:
                 _task_state["tmdb_matches"] = list(matches)
+                _save_state_no_lock()
 
         _progress_callback(total, total, f"TMDB 匹配完成，共 {total} 个种子")
         return matches
@@ -480,6 +525,7 @@ def api_tmdb_update():
     tmdb_id = data.get("tmdb_id", "")
     tmdb_title_cn = data.get("tmdb_title_cn", "")
     tmdb_title_en = data.get("tmdb_title_en", "")
+    tmdb_rating = data.get("tmdb_rating", "")
 
     if not torrent_hash or not tmdb_id:
         return jsonify({"status": "error", "error": "参数不完整"}), 400
@@ -490,6 +536,8 @@ def api_tmdb_update():
                 m["tmdb_id"] = tmdb_id
                 m["tmdb_title_cn"] = tmdb_title_cn or m.get("parsed_title", "")
                 m["tmdb_title_en"] = tmdb_title_en or m.get("parsed_title", "")
+                m["tmdb_rating"] = tmdb_rating
+                _save_state_no_lock()
                 break
 
     return jsonify({"status": "ok", "message": f"已更新 {torrent_hash[:16]} -> TMDB ID {tmdb_id}"})
@@ -504,9 +552,9 @@ def api_tmdb_fetch():
         return jsonify({"status": "error", "error": "无效的 TMDB ID"}), 400
     from tmdb_client import TMDBClient
     client = TMDBClient()
-    tid, tcn, ten = client.fetch_by_id(tmdb_id)
+    tid, tcn, ten, tr = client.fetch_by_id(tmdb_id)
     if tid:
-        return jsonify({"status": "ok", "tmdb_id": str(tid), "tmdb_title_cn": tcn, "tmdb_title_en": ten})
+        return jsonify({"status": "ok", "tmdb_id": str(tid), "tmdb_title_cn": tcn, "tmdb_title_en": ten, "tmdb_rating": tr})
     return jsonify({"status": "error", "error": "未找到该 ID 对应的电影"}), 404
 
 
@@ -560,26 +608,17 @@ def api_analyze_start():
         # 合集模式下跳过合集种子
         if collection_strategy == "skip":
             analyze_list = [t for t in torrents if not is_collection(t.get("hash", ""))]
-            collection_list = [t for t in torrents if is_collection(t.get("hash", ""))]
-            skipped = len(collection_list)
+            skipped = sum(1 for t in torrents if is_collection(t.get("hash", "")))
             if skipped:
                 print(f"[analyze] 跳过 {skipped} 个合集种子（保护模式）", flush=True)
+            analyze_list = [t for t in torrents if not is_collection(t.get("hash", ""))]
         else:
             analyze_list = torrents
-            collection_list = []
 
         profiles = analyze_torrents(
             analyze_list,
             progress_callback=_progress_callback,
         )
-
-        # 为合集种子创建最小 profile（仅文件名分析，无需 SMB/MediaInfo）
-        for t in collection_list:
-            from media_analyzer import _analyze_by_filename
-            mp = _analyze_by_filename(t)
-            if mp:
-                mp.is_collection = True
-                profiles.append(mp)
 
         _progress_callback(len(profiles), len(profiles), f"分析完成，共 {len(profiles)} 个视频文件")
         return profiles
@@ -602,6 +641,10 @@ def api_dedup_run():
     if _task_state["running"]:
         return jsonify({"status": "error", "error": "后台任务正在运行"}), 400
 
+    data = request.get_json(silent=True) or {}
+    priority_layers = data.get("priority_layers")
+    priority_order = data.get("priority_order")
+
     with _task_state["lock"]:
         profiles = list(_task_state["profiles"])
         tmdb_matches = list(_task_state["tmdb_matches"])
@@ -610,7 +653,9 @@ def api_dedup_run():
         return jsonify({"status": "error", "error": "请先完成深度分析"}), 400
 
     def _run_dedup():
-        engine = DedupEngine(profiles, tmdb_matches)
+        engine = DedupEngine(profiles, tmdb_matches,
+                             priority_layers=priority_layers,
+                             priority_order=priority_order)
         results = engine.to_dict()
         summary = engine.get_summary()
         _progress_callback(0, 0, f"去重完成，发现 {summary['duplicate_groups']} 组重复，{summary['delete_candidates']} 个待删除")
@@ -661,6 +706,7 @@ def api_delete_torrents():
                 p for p in _task_state["profiles"]
                 if p.torrent_hash not in hashes
             ]
+            _save_state_no_lock()
         return jsonify({"status": "ok", "deleted": len(hashes)})
     except Exception as e:
         return jsonify({"status": "error", "error": str(e)}), 500
@@ -705,7 +751,35 @@ def api_reset():
         _task_state["running"] = False
         _task_state["current_step"] = ""
         _task_state["progress"] = {"current": 0, "total": 0, "message": ""}
+    # 清除持久化状态文件
+    try:
+        if os.path.exists(STATE_FILE):
+            os.remove(STATE_FILE)
+    except Exception:
+        pass
     return jsonify({"status": "ok"})
+
+
+# ─── 状态恢复 API ───────────────────────────────────────────
+
+@app.route("/api/state/restore", methods=["GET"])
+def api_restore_state():
+    """返回持久化的任务状态，用于页面刷新后恢复。"""
+    with _task_state["lock"]:
+        has_data = len(_task_state["torrents"]) > 0
+        if not has_data:
+            return jsonify({"status": "ok", "has_data": False})
+        return jsonify({
+            "status": "ok",
+            "has_data": True,
+            "current_step": _task_state["current_step"],
+            "progress": dict(_task_state["progress"]),
+            "torrents": list(_task_state["torrents"]),
+            "tmdb_matches": list(_task_state["tmdb_matches"]),
+            "profiles": [p.to_dict() for p in _task_state["profiles"]],
+            "dedup_results": list(_task_state["dedup_results"]),
+            "collection_flags": dict(_task_state["collection_flags"]),
+        })
 
 
 # ─── 前端入口 ───────────────────────────────────────────────

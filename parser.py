@@ -106,16 +106,16 @@ def parse_filename(filename: str) -> dict:
         result["guess_title"] = guess.get("title", "")
         result["year"] = str(guess.get("year", ""))
         if not result["year"]:
-            ym = YEAR_PAT.search(filename)
+            ym = YEAR_PAT.findall(filename)
             if ym:
-                result["year"] = ym.group(1)
+                result["year"] = ym[-1]  # 取最后一个匹配（上映年份通常在文件名末尾）
         result["guess_year"] = result["year"]
     else:
         # Fallback: extract year, then guess title from remaining
         if not result["year"]:
-            ym = YEAR_PAT.search(filename)
+            ym = YEAR_PAT.findall(filename)
             if ym:
-                result["year"] = ym.group(1)
+                result["year"] = ym[-1]  # 取最后一个匹配
         result["guess_year"] = result["year"]
         # Try to extract title from leading part
         base = filename.replace("[", "").replace("]", "")

@@ -35,7 +35,7 @@ class TMDBClient:
 
     def _pick_best(self, results, query, year):
         if not results:
-            return None, "", "", ""
+            return None, "", "", "", ""
         scored = []
         ql = query.lower().strip()
         for m in results:
@@ -55,27 +55,28 @@ class TMDBClient:
         scored.sort(key=lambda x: -x[0])
         best = scored[0][1]
         release_year = (best.get("release_date") or "")[:4]
-        return best["id"], best.get("title", ""), best.get("original_title", ""), release_year
+        rating = best.get("vote_average", 0) or 0
+        return best["id"], best.get("title", ""), best.get("original_title", ""), release_year, round(rating, 1)
 
     def search(self, query, year=None, language="zh-CN"):
         if not query or not self._api_key:
-            return None, "", "", ""
+            return None, "", "", "", ""
         query = self._normalize_query(query)
         if not query:
-            return None, "", "", ""
+            return None, "", "", "", ""
         self._rate_limit()
         resp = self._request(query, year=year, language="zh-CN")
         if resp is None:
-            return None, "", "", ""
+            return None, "", "", "", ""
         try:
             results = resp.json().get("results", [])
         except Exception:
-            return None, "", "", ""
+            return None, "", "", "", ""
         return self._pick_best(results, query, year)
 
     def fetch_by_id(self, tmdb_id, language="zh-CN"):
         if not tmdb_id or not tmdb_id.isdigit() or not self._api_key:
-            return None, "", ""
+            return None, "", "", ""
         self._rate_limit()
         try:
             r = requests.get(
@@ -83,10 +84,11 @@ class TMDBClient:
                 params={"api_key": self._api_key, "language": "zh-CN"}, timeout=15)
             if r.status_code == 200:
                 d = r.json()
-                return d.get("id"), d.get("title", ""), d.get("original_title", "")
+                rating = round(d.get("vote_average", 0) or 0, 1)
+                return d.get("id"), d.get("title", ""), d.get("original_title", ""), rating
         except Exception:
             pass
-        return None, "", ""
+        return None, "", "", ""
 
     def _has_meaningful_chinese(self, text):
         cn = "".join(c for c in text if "\u4e00" <= c <= "\u9fff")
@@ -105,7 +107,7 @@ class TMDBClient:
         return q
 
     def match_entry(self, filename, guess_title, guess_year):
-        result = {"tmdb_id": "", "tmdb_title_cn": "", "tmdb_title_en": "", "tmdb_year": "", "matched_by": ""}
+        result = {"tmdb_id": "", "tmdb_title_cn": "", "tmdb_title_en": "", "tmdb_year": "", "tmdb_rating": "", "matched_by": ""}
         year = guess_year if guess_year and guess_year.isdigit() else None
         cn = extract_chinese(filename)
         has_cn = self._has_meaningful_chinese(cn)
@@ -115,41 +117,63 @@ class TMDBClient:
             eng_title = re.sub(r'[\u4e00-\u9fff：、，。！？；："（）]', '', guess_title).strip()
             eng_title = re.sub(r'\s+', ' ', eng_title).strip()
 
+        def _years_to_try(base_year):
+            """返回 [精确年份, 年份-1, 年份+1] 列表，自动去重和过滤无效值。"""
+            if not base_year or not base_year.isdigit():
+                return [base_year]
+            years = [base_year]
+            y = int(base_year)
+            if y > 1900:
+                years.append(str(y - 1))
+            if y < 2099:
+                years.append(str(y + 1))
+            return years
+
         def try_search(q, y):
-            tid, tcn, ten, ty = self.search(q, year=y, language="zh-CN")
-            return tid, tcn, ten, ty
+            tid, tcn, ten, ty, tr = self.search(q, year=y, language="zh-CN")
+            return tid, tcn, ten, ty, tr
+
+        def try_search_with_fallback(q, base_year):
+            """尝试精确年份搜索，失败后尝试 ±1 年。"""
+            for y in _years_to_try(base_year):
+                tid, tcn, ten, ty, tr = try_search(q, y)
+                if tid:
+                    return tid, tcn, ten, ty, tr
+            return None, "", "", "", ""
+
+        def _update_result(tid, tcn, ten, ty, tr, suffix):
+            result.update({"tmdb_id": str(tid), "tmdb_title_cn": tcn,
+                           "tmdb_title_en": ten, "tmdb_year": ty,
+                           "tmdb_rating": tr, "matched_by": suffix})
 
         # Chinese path
         if has_cn:
-            for suffix, q, y in [("cn_zh_year", cn, year), ("cn_zh_no_year", cn, None),
-                                 ("guess_zh_year", guess_title, year), ("guess_zh_no_year", guess_title, None)]:
+            for suffix, q in [("cn_zh_year", cn),
+                             ("guess_zh_year", guess_title)]:
                 if not q:
                     continue
-                tid, tcn, ten, ty = try_search(q, y)
+                tid, tcn, ten, ty, tr = try_search_with_fallback(q, year)
                 if tid:
-                    result.update({"tmdb_id": str(tid), "tmdb_title_cn": tcn,
-                                   "tmdb_title_en": ten, "tmdb_year": ty, "matched_by": suffix})
+                    _update_result(tid, tcn, ten, ty, tr, suffix)
                     return result
 
-        # English path
-        for q in ([eng_title] if eng_title else []):
-            if not q:
-                continue
-            for suffix, y in [("en_year", year), ("en_no_year", None)]:
-                tid, tcn, ten, ty = try_search(q, y)
+        # English path (only with year)
+        if year:
+            for q in ([eng_title] if eng_title else []):
+                if not q:
+                    continue
+                tid, tcn, ten, ty, tr = try_search_with_fallback(q, year)
                 if tid:
-                    result.update({"tmdb_id": str(tid), "tmdb_title_cn": tcn,
-                                   "tmdb_title_en": ten, "tmdb_year": ty, "matched_by": suffix})
+                    _update_result(tid, tcn, ten, ty, tr, "en_year")
                     return result
 
-        # Last resort: first segment of filename
-        first_seg = filename.split(".")[0].strip()
-        if first_seg and first_seg != guess_title and first_seg != cn:
-            for suffix, y in [("first_seg_year", year), ("first_seg_no_year", None)]:
-                tid, tcn, ten, ty = try_search(first_seg, y)
+        # Last resort: first segment of filename (only with year)
+        if year:
+            first_seg = filename.split(".")[0].strip()
+            if first_seg and first_seg != guess_title and first_seg != cn:
+                tid, tcn, ten, ty, tr = try_search_with_fallback(first_seg, year)
                 if tid:
-                    result.update({"tmdb_id": str(tid), "tmdb_title_cn": tcn,
-                                   "tmdb_title_en": ten, "tmdb_year": ty, "matched_by": suffix})
+                    _update_result(tid, tcn, ten, ty, tr, "first_seg_year")
                     return result
 
         return result
