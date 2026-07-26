@@ -74,13 +74,15 @@ def _ensure_mount(mount_point: str) -> bool:
     password = config.get("smb_password")
     os.makedirs(mount_point, exist_ok=True)
     try:
-        cmd = [
-            "sudo", "mount", "-t", "cifs",
-            f"//{host}/{share}",
-            mount_point,
-            "-o", f"username={username},password={password},iocharset=utf8,file_mode=0755,dir_mode=0755,noexec,nosuid,nodev"
-        ]
+        # 直接 mount（容器内 root 或宿主机均可）
+        # 如果失败，回退到 sudo mount（某些环境需要）
+        opts = f"username={username},password={password},iocharset=utf8,file_mode=0755,dir_mode=0755,noexec,nosuid,nodev"
+        cmd = ["mount", "-t", "cifs", f"//{host}/{share}", mount_point, "-o", opts]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            # 回退到 sudo mount
+            cmd = ["sudo", "mount", "-t", "cifs", f"//{host}/{share}", mount_point, "-o", opts]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             print(f"[smb] Mount error: {result.stderr}", flush=True)
             return False
@@ -772,6 +774,9 @@ def unmount_smb():
     mount_point = config.get("smb_mount_point")
     if os.path.ismount(mount_point):
         try:
-            subprocess.run(["sudo", "umount", mount_point], capture_output=True, timeout=10)
+            subprocess.run(["umount", mount_point], capture_output=True, timeout=10)
         except Exception:
-            pass
+            try:
+                subprocess.run(["sudo", "umount", mount_point], capture_output=True, timeout=10)
+            except Exception:
+                pass

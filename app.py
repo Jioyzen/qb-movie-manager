@@ -247,10 +247,12 @@ def api_test_smb():
 
     os.makedirs(mount_point, exist_ok=True)
     try:
-        subprocess.run(["sudo", "mount", "-t", "cifs",
-            f"//{host}/{share}", mount_point,
-            "-o", f"username={username},password={password},iocharset=utf8,file_mode=0755,dir_mode=0755,noexec,nosuid,nodev"],
+        opts = f"username={username},password={password},iocharset=utf8,file_mode=0755,dir_mode=0755,noexec,nosuid,nodev"
+        r = subprocess.run(["mount", "-t", "cifs", f"//{host}/{share}", mount_point, "-o", opts],
             capture_output=True, text=True, timeout=15)
+        if r.returncode != 0:
+            r = subprocess.run(["sudo", "mount", "-t", "cifs", f"//{host}/{share}", mount_point, "-o", opts],
+                capture_output=True, text=True, timeout=15)
     except Exception as e:
         return jsonify({"status": "error", "message": f"挂载失败: {e}"})
 
@@ -264,7 +266,7 @@ def api_test_smb():
         return jsonify({"status": "ok", "message": f"挂载成功但无法读取目录: {e}"})
     finally:
         try:
-            subprocess.run(["sudo", "umount", mount_point], capture_output=True, timeout=10)
+            subprocess.run(["umount", mount_point], capture_output=True, timeout=10)
         except Exception:
             pass
 
@@ -304,10 +306,12 @@ def api_verify_config():
         else:
             os.makedirs(mount_point, exist_ok=True)
             try:
-                r = subprocess.run(["sudo", "mount", "-t", "cifs",
-                    f"//{smb_host}/{smb_share}", mount_point,
-                    "-o", f"username={username},password={password},iocharset=utf8,file_mode=0755,dir_mode=0755,noexec,nosuid,nodev"],
+                opts = f"username={username},password={password},iocharset=utf8,file_mode=0755,dir_mode=0755,noexec,nosuid,nodev"
+                r = subprocess.run(["mount", "-t", "cifs", f"//{smb_host}/{smb_share}", mount_point, "-o", opts],
                     capture_output=True, text=True, timeout=15)
+                if r.returncode != 0:
+                    r = subprocess.run(["sudo", "mount", "-t", "cifs", f"//{smb_host}/{smb_share}", mount_point, "-o", opts],
+                        capture_output=True, text=True, timeout=15)
                 if r.returncode != 0:
                     issues.append(f"SMB 挂载失败: {r.stderr.strip()}")
                 elif not os.path.ismount(mount_point):
@@ -800,6 +804,6 @@ def cleanup(exception=None):
 
 if __name__ == "__main__":
     try:
-        app.run(host="0.0.0.0", port=5000, debug=True)
+        app.run(host="0.0.0.0", port=8090, debug=True)
     finally:
         unmount_smb()
