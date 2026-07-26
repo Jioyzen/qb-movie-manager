@@ -234,14 +234,14 @@ const renderConfig = async (container) => {
     <div id="config-msg" style="display:none;padding:10px 16px;border-radius:8px;margin-bottom:16px;font-size:13px;"></div>
     <div class="card"><div class="card-title">qBittorrent 连接</div>
       <div class="form-row">
-        <div class="form-group"><label>地址</label><input id="c-qb-h" value="${d.config.qb_host}"></div>
-        <div class="form-group" style="max-width:100px"><label>端口</label><input id="c-qb-p" value="${d.config.qb_port}"></div>
-        <div class="form-group" style="max-width:120px"><label>用户名</label><input id="c-qb-u" value="${d.config.qb_username}"></div>
-        <div class="form-group" style="max-width:160px"><label>密码</label><input id="c-qb-pw" type="password" value="${d.config.qb_password}"></div>
+        <div class="form-group"><label>地址</label><input id="c-qb-h"></div>
+        <div class="form-group" style="max-width:100px"><label>端口</label><input id="c-qb-p"></div>
+        <div class="form-group" style="max-width:120px"><label>用户名</label><input id="c-qb-u"></div>
+        <div class="form-group" style="max-width:160px"><label>密码</label><input id="c-qb-pw" type="password"></div>
       </div>
-      <div class="btn-row"><button class="btn" onclick="testQBAndFetchCats()">🔄 测试连接并获取分类</button><span id="qb-test-r" style="font-size:13px;color:#8b949e;"></span></div>
+      <div class="btn-row"><button class="btn" onclick="testQBAndFetchCats()">🔄 测试连接并获取分类</button><span id="qb-test-r" style="font-size:13px;color:var(--text-secondary);"></span></div>
       <div id="cat-select" style="margin-top:12px;${state.qbCategories.length === 0 ? 'display:none' : ''}">
-        <label style="color:#8b949e;font-size:12px;">选择需要处理的分类：</label>
+        <label style="color:var(--text-secondary);font-size:12px;">选择需要处理的分类：</label>
         <div class="form-row" style="margin-top:6px" id="cat-checkboxes"></div>
       </div>
     </div>
@@ -258,10 +258,10 @@ const renderConfig = async (container) => {
       </div>
       <div id="smb-fields" style="${d.config.use_local_path ? 'display:none' : ''}">
         <div class="form-row">
-          <div class="form-group"><label>SMB 地址</label><input id="c-sh" value="${d.config.smb_host}"></div>
-          <div class="form-group" style="max-width:120px"><label>共享名称</label><input id="c-ss" value="${d.config.smb_share}"></div>
-          <div class="form-group" style="max-width:120px"><label>用户名</label><input id="c-su" value="${d.config.smb_username}"></div>
-          <div class="form-group" style="max-width:160px"><label>密码</label><input id="c-sp" type="password" value="${d.config.smb_password}"></div>
+          <div class="form-group"><label>SMB 地址</label><input id="c-sh"></div>
+          <div class="form-group" style="max-width:120px"><label>共享名称</label><input id="c-ss"></div>
+          <div class="form-group" style="max-width:120px"><label>用户名</label><input id="c-su"></div>
+          <div class="form-group" style="max-width:160px"><label>密码</label><input id="c-sp" type="password"></div>
         </div>
       </div>
       <div id="local-fields" style="${d.config.use_local_path ? '' : 'display:none'}">
@@ -270,11 +270,11 @@ const renderConfig = async (container) => {
           ${(() => {
             const mappings = d.config.path_mappings && d.config.path_mappings.length > 0
               ? d.config.path_mappings
-              : (d.config.local_path ? [{local_path: d.config.local_path, qb_prefix: d.config.qb_download_prefix || '/downloads'}] : [{local_path: '', qb_prefix: '/downloads'}]);
+              : (d.config.local_path ? [{local_path: d.config.local_path, qb_prefix: d.config.qb_download_prefix || '/downloads'}] : [{local_path: '', qb_prefix: ''}]);
             return mappings.map((m, i) => `
               <div class="form-row" id="pm-row-${i}" style="align-items:end">
-                <div class="form-group"><label>本机路径</label><input class="pm-local" value="${m.local_path || ''}" placeholder="/mnt/downloads 或 /data"></div>
-                <div class="form-group" style="max-width:160px"><label>QB 前缀</label><input class="pm-qb" value="${m.qb_prefix || '/downloads'}" placeholder="/downloads"></div>
+                <div class="form-group" style="max-width:300px"><label>本机路径</label><input class="pm-local" value="${m.local_path || ''}"></div>
+                <div class="form-group" style="max-width:160px"><label>QB 前缀</label><input class="pm-qb" value="${m.qb_prefix || ''}"></div>
                 <button class="btn btn-sm" onclick="removePathMapping(${i})" ${mappings.length <= 1 ? 'disabled style="opacity:0.3;cursor:not-allowed"' : ''} style="margin-bottom:8px">✕</button>
               </div>`).join('');
           })()}
@@ -284,14 +284,14 @@ const renderConfig = async (container) => {
     </div>
     <div class="card"><div class="card-title">TMDB 配置</div>
       <div class="form-row">
-        <div class="form-group" style="max-width:300px"><label>API Key</label><input id="c-tk" value="${d.config.tmdb_api_key}"></div>
-        <div class="form-group" style="max-width:100px"><label>请求间隔(秒)</label><input id="c-tr" value="${d.config.tmdb_rate_limit}"></div>
+        <div class="form-group" style="max-width:300px"><label>API Key</label><input id="c-tk"></div>
+        <div class="form-group" style="max-width:100px"><label>请求间隔(秒)</label><input id="c-tr"></div>
       </div>
     </div>
     <div class="card"><div class="card-title">去重策略</div>
       <div class="form-row">
         <div class="form-group" style="max-width:160px"><label>合集策略</label><select id="c-col"><option value="skip" ${d.config.collection_strategy==='skip'?'selected':''}>跳过合集（保护）</option><option value="prefer" ${d.config.collection_strategy==='prefer'?'selected':''}>合集优先</option></select></div>
-        <div class="form-group" style="max-width:100px"><label>小文件阈值(MB)</label><input id="c-ms" value="${d.config.min_file_size_mb}"></div>
+        <div class="form-group" style="max-width:100px"><label>小文件阈值(MB)</label><input id="c-ms"></div>
       </div>
     </div>
     <div class="btn-row" style="justify-content:center;margin-top:24px">
@@ -378,8 +378,8 @@ window.addPathMapping = () => {
   div.id = `pm-row-${idx}`;
   div.style.alignItems = 'end';
   div.innerHTML = `
-    <div class="form-group"><label>本机路径</label><input class="pm-local" placeholder="/mnt/downloads 或 /data"></div>
-    <div class="form-group" style="max-width:160px"><label>QB 前缀</label><input class="pm-qb" placeholder="/downloads"></div>
+    <div class="form-group" style="max-width:300px"><label>本机路径</label><input class="pm-local"></div>
+    <div class="form-group" style="max-width:160px"><label>QB 前缀</label><input class="pm-qb"></div>
     <button class="btn btn-sm" onclick="removePathMapping(${idx})" style="margin-bottom:8px">✕</button>`;
   el.appendChild(div);
 };
