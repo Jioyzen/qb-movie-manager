@@ -1,0 +1,37 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime data
+data/config.json
+data/state.json
+data/cache/
+
+# Environment
+.env
+
+# Documentation
+CLAUDE.md
+README.md
+
+# Docker
+.dockerignore

@@ -1,0 +1,35 @@
+version: "3.8"
+
+services:
+  qb-movie-manager:
+    build: .
+    container_name: qb-movie-manager
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    volumes:
+      # 配置持久化：宿主机目录映射到容器 /config
+      - ./config:/config
+      # 媒体文件（本地路径模式）：宿主机 QB 下载目录映射到容器 /data
+      # 修改为你的实际路径，例如：
+      #   - /path/to/your/downloads:/data
+      # 然后在 WebUI 配置中设置 本地路径 = /data
+      # - /volume1/downloads:/data
+    environment:
+      # 配置文件的容器内路径（默认即可，无需修改）
+      - QB_MOVIE_CONFIG=/config/config.json
+      # TZ 设置
+      - TZ=Asia/Shanghai
+    # 如果需要 SMB 挂载功能（在容器内直接挂载远程 SMB 共享），
+    # 取消注释以下配置：
+    # cap_add:
+    #   - SYS_ADMIN
+    # devices:
+    #   - /dev/fuse
+    # security_opt:
+    #   - apparmor:unconfined
+    #
+    # 推荐做法：在宿主机上挂载 SMB 共享，然后通过 volumes 传入容器，
+    # 无需给容器特殊权限。例如：
+    #   sudo mount -t cifs //192.168.1.100/share /mnt/media -o ...
+    #   docker run -v /mnt/media:/data ...
