@@ -266,11 +266,21 @@ const renderConfig = async (container) => {
       </div>
       <div id="local-fields" style="${d.config.use_local_path ? '' : 'display:none'}">
         <div class="form-row">
-          <div class="form-group"><label>本地路径</label>
-            <input id="c-lp" value="${d.config.local_path || ''}" placeholder="例如: /mnt/storage/downloads">
-            <span class="hint">qBittorrent 下载目录在本地文件系统中的实际路径</span>
+          <div class="form-group"><label>主路径（默认，QB 下载前缀 /downloads）</label>
+            <input id="c-lp" value="${d.config.local_path || ''}" placeholder="例如: /data">
+            <span class="hint">qBittorrent 下载目录在容器/宿主机中的实际路径</span>
           </div>
         </div>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px">多目录映射（如果 QB 绑定了多个下载目录，在此添加对应关系）</div>
+        <div id="path-mappings">
+          ${(d.config.local_path_mappings || []).map((m, i) => `
+            <div class="form-row" id="pm-row-${i}" style="align-items:end">
+              <div class="form-group" style="max-width:140px"><label>QB 前缀</label><input class="pm-prefix" value="${m.prefix || ''}" placeholder="/downloads2"></div>
+              <div class="form-group"><label>本地路径</label><input class="pm-path" value="${m.path || ''}" placeholder="/vol2/..."></div>
+              <button class="btn btn-sm" onclick="removePathMapping(${i})" style="margin-bottom:8px">✕</button>
+            </div>`).join('')}
+        </div>
+        <button class="btn btn-sm" onclick="addPathMapping()" style="margin-top:4px">＋ 添加路径映射</button>
       </div>
     </div>
     <div class="card"><div class="card-title">TMDB 配置</div>
@@ -360,6 +370,26 @@ window.togglePathMode = (mode) => {
   if (local) local.style.display = mode === 'local' ? '' : 'none';
 };
 
+window.addPathMapping = () => {
+  const el = document.getElementById('path-mappings');
+  if (!el) return;
+  const idx = el.children.length;
+  const div = document.createElement('div');
+  div.className = 'form-row';
+  div.id = `pm-row-${idx}`;
+  div.style.alignItems = 'end';
+  div.innerHTML = `
+    <div class="form-group" style="max-width:140px"><label>QB 前缀</label><input class="pm-prefix" placeholder="/downloads2"></div>
+    <div class="form-group"><label>本地路径</label><input class="pm-path" placeholder="/vol2/..."></div>
+    <button class="btn btn-sm" onclick="removePathMapping(${idx})" style="margin-bottom:8px">✕</button>`;
+  el.appendChild(div);
+};
+
+window.removePathMapping = (idx) => {
+  const row = document.getElementById(`pm-row-${idx}`);
+  if (row) row.remove();
+};
+
 window.verifyAndGo = async () => {
   const btn = document.getElementById('btn-go'); btn.disabled = true;
   showConfigMsg('验证中...', 'success');
@@ -385,6 +415,14 @@ window.verifyAndGo = async () => {
   };
   if (useLocal) {
     cfg.local_path = document.getElementById('c-lp').value;
+    // 收集多路径映射
+    const mappings = [];
+    document.querySelectorAll('#path-mappings .form-row').forEach(row => {
+      const prefix = row.querySelector('.pm-prefix')?.value?.trim();
+      const path = row.querySelector('.pm-path')?.value?.trim();
+      if (prefix && path) mappings.push({ prefix, path });
+    });
+    cfg.local_path_mappings = mappings;
   } else {
     cfg.smb_host = document.getElementById('c-sh').value;
     cfg.smb_share = document.getElementById('c-ss').value;

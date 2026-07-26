@@ -497,7 +497,15 @@ def analyze_torrents(
     use_local = config.get("use_local_path", False)
     if use_local:
         mount_point = config.get("local_path", "")
-        if not mount_point or not os.path.isdir(mount_point):
+        mappings = config.get("local_path_mappings", []) or []
+        # 检查至少有一个本地路径可用（主路径或任一映射路径）
+        paths_ok = bool(mount_point and os.path.isdir(mount_point))
+        if not paths_ok:
+            for m in mappings:
+                if m.get("path") and os.path.isdir(m["path"]):
+                    paths_ok = True
+                    break
+        if not paths_ok:
             print("[media_analyzer] Local path not found, falling back to filename-only", flush=True)
             return _analyze_filename_only(torrents, progress_callback, control_callback)
     else:
@@ -583,14 +591,25 @@ def _analyze_single_video_file(torrent: dict, vf: dict, mount_point: str, save_p
 
     use_local = config.get("use_local_path", False)
     if use_local:
-        # 本地路径：直接拼接 save_path + file_rel_path
-        # qBittorrent save_path 就是本地真实路径
-        prefix = config.get("qb_download_prefix")
-        if save_path.startswith(prefix):
-            relative = save_path[len(prefix):].lstrip("/")
-        else:
-            relative = save_path.lstrip("/")
-        full_path = os.path.join(mount_point, relative, file_rel_path)
+        # 本地路径：尝试多个映射，最后回退到主路径
+        mapped = False
+        mappings = config.get("local_path_mappings", []) or []
+        for m in mappings:
+            pfx = m.get("prefix", "")
+            mp = m.get("path", "")
+            if pfx and mp and save_path.startswith(pfx):
+                relative = save_path[len(pfx):].lstrip("/")
+                full_path = os.path.join(mp, relative, file_rel_path)
+                mapped = True
+                break
+        if not mapped:
+            # 回退到单路径模式
+            prefix = config.get("qb_download_prefix")
+            if save_path.startswith(prefix):
+                relative = save_path[len(prefix):].lstrip("/")
+            else:
+                relative = save_path.lstrip("/")
+            full_path = os.path.join(mount_point, relative, file_rel_path)
     else:
         # Build SMB path: mount_point + save_path_without_prefix + file_rel_path
         prefix = config.get("qb_download_prefix")

@@ -53,5 +53,6 @@
     "sdr"
   ],
   "use_local_path": false,
-  "local_path": ""
+  "local_path": "",
+  "local_path_mappings": []
 }

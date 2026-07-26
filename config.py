@@ -37,6 +37,7 @@ DEFAULTS = {
     # Path mode: false=SMB, true=local
     "use_local_path": True,
     "local_path": "",
+    "local_path_mappings": [],
     # Collection strategy: "skip" (protect collections) | "prefer" (prefer collection)
     "collection_strategy": "skip",
     # Priority chain: ordered list of layers
