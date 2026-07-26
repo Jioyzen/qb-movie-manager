@@ -148,8 +148,14 @@ class TMDBClient:
 
         # Chinese path
         if has_cn:
-            for suffix, q in [("cn_zh_year", cn),
-                             ("guess_zh_year", guess_title)]:
+            # 准备查询列表：带数字的标题优先，无数字的标题做回退
+            cn_queries = [("cn_zh_year", cn)]
+            cn_clean = re.sub(r'[\dⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]+$', '', cn).strip()
+            # 清理后的标题太短（<2字）时跳过，避免单个字模糊匹配
+            if cn_clean and cn_clean != cn and len(cn_clean) >= 2:
+                cn_queries.append(("cn_clean_year", cn_clean))
+            cn_queries.append(("guess_zh_year", guess_title))
+            for suffix, q in cn_queries:
                 if not q:
                     continue
                 tid, tcn, ten, ty, tr = try_search_with_fallback(q, year)

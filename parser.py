@@ -37,21 +37,60 @@ AUDIO_PAT = re.compile(
 YEAR_PAT = re.compile(r"(19\d\d|20\d\d)")
 
 
+_ROMAN_NUM = frozenset("\u2160\u2161\u2162\u2163\u2164\u2165\u2166\u2167\u2168\u2169")
+_CN_PUNCT = frozenset("\uff1a\u00b7\u3001\uff01\uff1f\uff08\uff09")  # \uff1a\u00b7\u3001\uff01\uff1f\uff08\uff09
+
+
+def _extract_cn_with_num(text: str) -> str:
+    """\u4ece\u4e00\u6bb5\u6587\u672c\u4e2d\u63d0\u53d6\u4e2d\u6587\u5b57\u7b26\u53ca\u7d27\u968f\u5176\u540e\u7684\u6570\u5b57/\u7f57\u9a6c\u6570\u5b57\uff08\u7cfb\u5217\u53f7\uff09\u3002
+
+    \u7279\u6b8a\u5904\u7406\uff1a
+    - \u4e2d\u6587\u5b57\u7b26\u524d\u6709\u4e00\u4e2a\u5927\u5199\u5b57\u6bcd\u65f6\u4fdd\u7559\u8be5\u5b57\u6bcd\uff08\u5982 "X\u6218\u8b66"\uff09
+    - \u4e2d\u6587\u6807\u70b9\uff08\uff1a\u00b7\u3001\uff01\uff1f\uff08\uff09\uff09\u4f5c\u4e3a\u6807\u9898\u5185\u90e8\u5b57\u7b26\u4fdd\u7559\uff08\u5982 "\u8718\u86db\u4fa0\uff1a\u82f1\u96c4\u65e0\u5f52"\uff09
+    """
+    result = ""
+    for i, c in enumerate(text):
+        if "\u4e00" <= c <= "\u9fff":
+            # \u4fdd\u7559\u4e2d\u6587\u5b57\u7b26\u524d\u7684\u4e00\u4e2a\u5927\u5199\u5b57\u6bcd\uff08\u5982 X\u6218\u8b66\u3001A\u8ba1\u5212\uff09
+            if i > 0 and not result:
+                prev = text[i - 1]
+                if prev.isascii() and prev.isupper():
+                    result += prev
+            result += c
+        elif result and (c.isdigit() or c in _ROMAN_NUM):
+            result += c
+        elif result and c in _CN_PUNCT:
+            # \u4e2d\u6587\u6807\u70b9\u4fdd\u7559\uff0c\u7528\u4e8e\u8fde\u63a5\u6807\u9898\u5185\u7684\u4e2d\u6587\u90e8\u5206
+            result += c
+        elif result:
+            break
+    return result
+
+
 def extract_chinese(text: str) -> str:
-    """Extract contiguous Chinese text, prioritizing text in [brackets] then leading chunk."""
+    """\u63d0\u53d6\u4e2d\u6587\u6807\u9898\uff0c\u4fdd\u7559\u5c3e\u90e8\u7cfb\u5217\u53f7\uff08\u6570\u5b57\u3001\u7f57\u9a6c\u6570\u5b57\uff09\u3002
+
+    \u5982\uff1a\"\u56db\u5927\u540d\u63553\" \u2192 \"\u56db\u5927\u540d\u63553\"\uff0c\"\u65e0\u95f4\u9053.\u2162.2003\" \u2192 \"\u65e0\u95f4\u9053\u2162\"
+    """
     # Priority 1: [brackets] containing Chinese
     for m in re.finditer(r"\[([^\]]*[\u4e00-\u9fff][^\]]*)\]", text):
-        cn = "".join(c for c in m.group(1) if "\u4e00" <= c <= "\u9fff")
+        cn = _extract_cn_with_num(m.group(1))
         if len(cn) >= 2:
             return cn
     # Priority 2: leading segment before first dot
-    leading = text.split(".")[0]
-    cn = "".join(c for c in leading if "\u4e00" <= c <= "\u9fff")
+    parts = text.split(".")
+    leading = parts[0]
+    cn = _extract_cn_with_num(leading)
     if len(cn) >= 2:
+        # \u68c0\u67e5\u4e0b\u4e00\u6bb5\u662f\u5426\u4e3a\u7f57\u9a6c\u6570\u5b57\u7cfb\u5217\u53f7\uff08\u5982 .\u2162.\uff09
+        if len(parts) >= 2:
+            nxt = parts[1].strip()
+            if nxt and all(c in _ROMAN_NUM for c in nxt):
+                cn += nxt
         return cn
     # Priority 3: first dot-separated part with Chinese
     for part in text.replace("[", "").replace("]", "").split("."):
-        cn = "".join(c for c in part if "\u4e00" <= c <= "\u9fff")
+        cn = _extract_cn_with_num(part)
         if len(cn) >= 2:
             return cn
     return ""

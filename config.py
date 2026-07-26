@@ -34,6 +34,9 @@ DEFAULTS = {
     "smb_password": "",
     "smb_mount_point": "/mnt/qb_downloads",
     "qb_download_prefix": "/downloads",
+    # Path mode: false=SMB, true=local
+    "use_local_path": True,
+    "local_path": "",
     # Collection strategy: "skip" (protect collections) | "prefer" (prefer collection)
     "collection_strategy": "skip",
     # Priority chain: ordered list of layers

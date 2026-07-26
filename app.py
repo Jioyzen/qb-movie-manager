@@ -13,7 +13,7 @@ from qb_client import QBClient
 from parser import parse_filename
 from tmdb_client import TMDBClient
 from scoring_engine import MediaProfile, rank_profiles
-from media_analyzer import analyze_torrents, unmount_smb, is_collection_seed
+from media_analyzer import analyze_torrents, unmount_smb
 from dedup_engine import DedupEngine
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -38,56 +38,20 @@ _task_state = {
 
 # ─── 状态持久化 ───────────────────────────────────────────────
 
-STATE_FILE = os.path.join(BASE_DIR, "data", "state.json")
-
-def _save_state():
-    """将当前可序列化的状态保存到 JSON 文件。"""
+# 启动时清除旧的任务数据，确保每次刷新都是全新开始
+def _clear_task_data():
     with _task_state["lock"]:
-        _save_state_no_lock()
+        _task_state["current_step"] = ""
+        _task_state["progress"] = {"current": 0, "total": 0, "message": ""}
+        _task_state["torrents"] = []
+        _task_state["tmdb_matches"] = []
+        _task_state["profiles"] = []
+        _task_state["dedup_results"] = []
+        _task_state["collection_flags"] = {}
+        _task_state["running"] = False
+        _task_state["paused"] = False
 
-
-def _save_state_no_lock():
-    """保存状态（调用方需持有 _task_state["lock"]）。"""
-    state = {
-        "current_step": _task_state["current_step"],
-        "progress": dict(_task_state["progress"]),
-        "torrents": list(_task_state["torrents"]),
-        "tmdb_matches": list(_task_state["tmdb_matches"]),
-        "profiles": [p.to_dict() for p in _task_state["profiles"]],
-        "dedup_results": list(_task_state["dedup_results"]),
-        "collection_flags": dict(_task_state["collection_flags"]),
-    }
-    try:
-        os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(state, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"[state] Save error: {e}", flush=True)
-
-
-def _load_state():
-    """从 JSON 文件加载持久化状态到 _task_state。"""
-    if not os.path.exists(STATE_FILE):
-        return
-    try:
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            state = json.load(f)
-        with _task_state["lock"]:
-            _task_state["current_step"] = state.get("current_step", "")
-            _task_state["progress"] = state.get("progress", {"current": 0, "total": 0, "message": ""})
-            _task_state["torrents"] = state.get("torrents", [])
-            _task_state["tmdb_matches"] = state.get("tmdb_matches", [])
-            _task_state["profiles"] = [MediaProfile.from_dict(p) for p in state.get("profiles", [])]
-            _task_state["dedup_results"] = state.get("dedup_results", [])
-            _task_state["collection_flags"] = state.get("collection_flags", {})
-            _task_state["running"] = False
-            _task_state["paused"] = False
-        print(f"[state] Loaded from {STATE_FILE}", flush=True)
-    except Exception as e:
-        print(f"[state] Load error: {e}", flush=True)
-
-# 启动时加载持久化状态
-_load_state()
+_clear_task_data()
 
 # ─── 辅助函数 ───────────────────────────────────────────────
 
@@ -111,8 +75,10 @@ def _background_task(step: str, func, *args, **kwargs):
             with _task_state["lock"]:
                 _store_result(step, result)
                 _task_state["running"] = False
-                _task_state["progress"]["message"] = "完成"
-            _save_state()
+                if _task_state.pop("canceled", False):
+                    _task_state["progress"]["message"] = "已停止"
+                else:
+                    _task_state["progress"]["message"] = "完成"
         except Exception as e:
             import traceback
             with _task_state["lock"]:
@@ -208,7 +174,6 @@ def _update_collection_flags(torrents: list[dict]):
 
     with _task_state["lock"]:
         _task_state["collection_flags"] = flags
-        _save_state_no_lock()
 
 
 def is_collection(torrent_hash: str) -> bool:
@@ -308,32 +273,47 @@ def api_test_smb():
 def api_verify_config():
     """Verify all config: SMB mount + TMDB API key."""
     import subprocess, os
-    smb_host = config.get("smb_host")
-    smb_share = config.get("smb_share")
-    username = config.get("smb_username")
-    password = config.get("smb_password")
-    mount_point = config.get("smb_mount_point")
     api_key = config.get("tmdb_api_key")
+    use_local = config.get("use_local_path", False)
 
     issues = []
 
-    # 1. Test SMB mount
-    if os.path.ismount(mount_point):
-        # 已挂载，无需重复挂载
-        pass
+    # 1. Test path accessibility
+    if use_local:
+        local_path = config.get("local_path", "")
+        if not local_path:
+            issues.append("请配置本地路径")
+        elif not os.path.isdir(local_path):
+            issues.append(f"本地路径不存在: {local_path}")
+        else:
+            try:
+                dirs = [d for d in os.listdir(local_path) if os.path.isdir(os.path.join(local_path, d))]
+                if not dirs:
+                    issues.append("本地路径下未找到子目录，请确认路径是否正确")
+            except Exception as e:
+                issues.append(f"本地路径读取失败: {e}")
     else:
-        os.makedirs(mount_point, exist_ok=True)
-        try:
-            r = subprocess.run(["sudo", "mount", "-t", "cifs",
-                f"//{smb_host}/{smb_share}", mount_point,
-                "-o", f"username={username},password={password},iocharset=utf8,file_mode=0755,dir_mode=0755,noexec,nosuid,nodev"],
-                capture_output=True, text=True, timeout=15)
-            if r.returncode != 0:
-                issues.append(f"SMB 挂载失败: {r.stderr.strip()}")
-            elif not os.path.ismount(mount_point):
-                issues.append("SMB 挂载失败，请检查地址和认证信息")
-        except Exception as e:
-            issues.append(f"SMB 测试异常: {e}")
+        smb_host = config.get("smb_host")
+        smb_share = config.get("smb_share")
+        username = config.get("smb_username")
+        password = config.get("smb_password")
+        mount_point = config.get("smb_mount_point")
+
+        if os.path.ismount(mount_point):
+            pass
+        else:
+            os.makedirs(mount_point, exist_ok=True)
+            try:
+                r = subprocess.run(["sudo", "mount", "-t", "cifs",
+                    f"//{smb_host}/{smb_share}", mount_point,
+                    "-o", f"username={username},password={password},iocharset=utf8,file_mode=0755,dir_mode=0755,noexec,nosuid,nodev"],
+                    capture_output=True, text=True, timeout=15)
+                if r.returncode != 0:
+                    issues.append(f"SMB 挂载失败: {r.stderr.strip()}")
+                elif not os.path.ismount(mount_point):
+                    issues.append("SMB 挂载失败，请检查地址和认证信息")
+            except Exception as e:
+                issues.append(f"SMB 测试异常: {e}")
 
     # 2. Check TMDB key
     if not api_key or len(api_key) < 10:
@@ -420,7 +400,8 @@ def api_get_torrents():
 @app.route("/api/tmdb/match", methods=["POST"])
 def api_tmdb_match():
     if _task_state["running"]:
-        return jsonify({"status": "error", "error": "后台任务正在运行"}), 400
+        step_label = "深度分析" if _task_state.get("current_step") == "analyze" else "后台任务"
+        return jsonify({"status": "error", "error": f"{step_label}正在进行中，请等待完成后再开始TMDB匹配"}), 400
 
     with _task_state["lock"]:
         torrents = list(_task_state["torrents"])
@@ -440,6 +421,14 @@ def api_tmdb_match():
                     if not _task_state["paused"]:
                         break
                 time.sleep(1)
+
+            # 检查停止请求
+            with _task_state["lock"]:
+                if _task_state.get("stop_requested"):
+                    _task_state["stop_requested"] = False
+                    _task_state["canceled"] = True
+                    _task_state["progress"] = {"current": idx, "total": total, "message": f"匹配已停止，已匹配 {len(matches)} 个"}
+                    return matches
 
             if idx > 0 and idx % 10 == 0:
                 _progress_callback(idx, total, f"匹配中 ({idx}/{total})")
@@ -490,7 +479,6 @@ def api_tmdb_match():
             # 每匹配一个就实时更新到全局状态
             with _task_state["lock"]:
                 _task_state["tmdb_matches"] = list(matches)
-                _save_state_no_lock()
 
         _progress_callback(total, total, f"TMDB 匹配完成，共 {total} 个种子")
         return matches
@@ -537,7 +525,6 @@ def api_tmdb_update():
                 m["tmdb_title_cn"] = tmdb_title_cn or m.get("parsed_title", "")
                 m["tmdb_title_en"] = tmdb_title_en or m.get("parsed_title", "")
                 m["tmdb_rating"] = tmdb_rating
-                _save_state_no_lock()
                 break
 
     return jsonify({"status": "ok", "message": f"已更新 {torrent_hash[:16]} -> TMDB ID {tmdb_id}"})
@@ -565,6 +552,14 @@ def api_tmdb_pause():
         _task_state["paused"] = not _task_state["paused"]
         paused = _task_state["paused"]
     return jsonify({"status": "ok", "paused": paused})
+
+
+@app.route("/api/tmdb/stop", methods=["POST"])
+def api_tmdb_stop():
+    """Stop TMDB matching immediately."""
+    with _task_state["lock"]:
+        _task_state["stop_requested"] = True
+    return jsonify({"status": "ok", "message": "正在停止匹配..."})
 
 
 @app.route("/api/tmdb/live", methods=["GET"])
@@ -595,7 +590,8 @@ def api_tmdb_live():
 @app.route("/api/analyze/start", methods=["POST"])
 def api_analyze_start():
     if _task_state["running"]:
-        return jsonify({"status": "error", "error": "后台任务正在运行"}), 400
+        step_label = "TMDB匹配" if _task_state.get("current_step") == "tmdb" else "后台任务"
+        return jsonify({"status": "error", "error": f"{step_label}正在进行中，请等待完成后再开始深度分析"}), 400
 
     with _task_state["lock"]:
         torrents = list(_task_state["torrents"])
@@ -615,9 +611,27 @@ def api_analyze_start():
         else:
             analyze_list = torrents
 
+        def _control_check():
+            """检查暂停和停止。返回 True 表示应停止分析。"""
+            # 暂停处理
+            while True:
+                with _task_state["lock"]:
+                    if not _task_state.get("paused"):
+                        break
+                time.sleep(1)
+            # 停止处理
+            with _task_state["lock"]:
+                if _task_state.get("stop_requested"):
+                    _task_state["stop_requested"] = False
+                    _task_state["canceled"] = True
+                    return True
+            return False
+
         profiles = analyze_torrents(
             analyze_list,
             progress_callback=_progress_callback,
+            control_callback=_control_check,
+            collection_check=is_collection,
         )
 
         _progress_callback(len(profiles), len(profiles), f"分析完成，共 {len(profiles)} 个视频文件")
@@ -632,6 +646,23 @@ def api_get_profiles():
     with _task_state["lock"]:
         profiles = [p.to_dict() for p in _task_state["profiles"]]
     return jsonify({"status": "ok", "profiles": profiles, "count": len(profiles)})
+
+
+@app.route("/api/analyze/stop", methods=["POST"])
+def api_analyze_stop():
+    """Stop deep analysis immediately."""
+    with _task_state["lock"]:
+        _task_state["stop_requested"] = True
+    return jsonify({"status": "ok", "message": "正在停止分析..."})
+
+
+@app.route("/api/analyze/pause", methods=["POST"])
+def api_analyze_pause():
+    """Toggle pause/resume for deep analysis."""
+    with _task_state["lock"]:
+        _task_state["paused"] = not _task_state["paused"]
+        paused = _task_state["paused"]
+    return jsonify({"status": "ok", "paused": paused})
 
 
 # ─── 去重 API ───────────────────────────────────────────────
@@ -706,7 +737,6 @@ def api_delete_torrents():
                 p for p in _task_state["profiles"]
                 if p.torrent_hash not in hashes
             ]
-            _save_state_no_lock()
         return jsonify({"status": "ok", "deleted": len(hashes)})
     except Exception as e:
         return jsonify({"status": "error", "error": str(e)}), 500
@@ -751,35 +781,7 @@ def api_reset():
         _task_state["running"] = False
         _task_state["current_step"] = ""
         _task_state["progress"] = {"current": 0, "total": 0, "message": ""}
-    # 清除持久化状态文件
-    try:
-        if os.path.exists(STATE_FILE):
-            os.remove(STATE_FILE)
-    except Exception:
-        pass
     return jsonify({"status": "ok"})
-
-
-# ─── 状态恢复 API ───────────────────────────────────────────
-
-@app.route("/api/state/restore", methods=["GET"])
-def api_restore_state():
-    """返回持久化的任务状态，用于页面刷新后恢复。"""
-    with _task_state["lock"]:
-        has_data = len(_task_state["torrents"]) > 0
-        if not has_data:
-            return jsonify({"status": "ok", "has_data": False})
-        return jsonify({
-            "status": "ok",
-            "has_data": True,
-            "current_step": _task_state["current_step"],
-            "progress": dict(_task_state["progress"]),
-            "torrents": list(_task_state["torrents"]),
-            "tmdb_matches": list(_task_state["tmdb_matches"]),
-            "profiles": [p.to_dict() for p in _task_state["profiles"]],
-            "dedup_results": list(_task_state["dedup_results"]),
-            "collection_flags": dict(_task_state["collection_flags"]),
-        })
 
 
 # ─── 前端入口 ───────────────────────────────────────────────

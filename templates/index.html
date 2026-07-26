@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -23,6 +23,11 @@
       <div class="step" data-step="3" onclick="switchStep(3)"><div class="step-icon">&#x1F50D;</div><div class="step-label">深度分析</div></div>
       <div class="step" data-step="4" onclick="switchStep(4)"><div class="step-icon">&#x1F3AF;</div><div class="step-label">去重筛选</div></div>
       <div class="step" data-step="5" onclick="switchStep(5)"><div class="step-icon">&#x1F5D1;</div><div class="step-label">清理删除</div></div>
+      <div class="sidebar-spacer"></div>
+      <div class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="切换主题">
+        <div class="theme-toggle-icon" id="themeIcon">&#x1F319;</div>
+        <div class="theme-toggle-label" id="themeLabel">浅色</div>
+      </div>
     </nav>
     <div class="content" id="content"></div>
   </div>

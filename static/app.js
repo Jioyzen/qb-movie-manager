@@ -1,6 +1,6 @@
 /* ─── QB 影视管理工具 v2.1 - SPA ─────────────────────────────── */
 const state = { step: 0, torrents: [], matches: [], profiles: [], dedup: [], overview: null,
-  config: null, busy: false, pollTimer: null, keepOverrides: {}, qbCategories: [], collectionFilter: false, tmdbFilter: false };
+  config: null, busy: false, busyStep: '', pollTimer: null, keepOverrides: {}, qbCategories: [], collectionFilter: false, tmdbFilter: false };
 
 const api = async (url, opts = {}) => {
   try { const r = await fetch(url, { headers: { 'Content-Type': 'application/json', ...opts.headers }, ...opts }); return await r.json(); }
@@ -21,17 +21,26 @@ const setStatus = (t, b = false) => {
 };
 
 // ─── 轮询 ───────────────────────────────────────────────────
+const STEP_MAP = { 'fetch': 1, 'tmdb': 2, 'analyze': 3, 'dedup': 4 };
+
 const startPolling = () => {
   if (state.pollTimer) return;
   state.pollTimer = setInterval(async () => {
     const d = await api('/api/progress');
     if (!d) return;
     if (d.running) {
-      state.busy = true; setStatus(d.progress.message, true);
-      document.querySelectorAll('.progress-bar').forEach(e => e.style.display = 'block');
-      const pct = d.progress.total > 0 ? Math.round(d.progress.current / d.progress.total * 100) : 0;
-      document.querySelectorAll('.progress-bar .fill').forEach(e => e.style.width = `${pct}%`);
-      document.querySelectorAll('.task-status, .progress-text').forEach(e => { if (e) e.textContent = `${d.progress.message} (${pct}%)`; });
+      state.busy = true; state.busyStep = d.current_step; setStatus(d.progress.message, true);
+      // 只在与当前步骤匹配时才显示进度条，避免跨步骤进度泄漏
+      const taskStep = STEP_MAP[d.current_step] ?? -1;
+      if (state.step === taskStep) {
+        document.querySelectorAll('.progress-bar').forEach(e => e.style.display = 'block');
+        const pct = d.progress.total > 0 ? Math.round(d.progress.current / d.progress.total * 100) : 0;
+        document.querySelectorAll('.progress-bar .fill').forEach(e => e.style.width = `${pct}%`);
+        document.querySelectorAll('.task-status, .progress-text').forEach(e => { if (e) e.textContent = `${d.progress.message} (${pct}%)`; });
+      } else {
+        // 隐藏非当前步骤的进度条，避免上一任务的进度残留
+        document.querySelectorAll('.progress-bar').forEach(e => e.style.display = 'none');
+      }
       // TMDB 匹配时实时刷新
       if (state.step === 2 && d.current_step === 'tmdb') {
         const live = await api('/api/tmdb/live');
@@ -74,7 +83,7 @@ const startPolling = () => {
         }
       }
     } else if (state.busy || d.progress.total > 0) {
-      state.busy = false; clearInterval(state.pollTimer); state.pollTimer = null;
+      state.busy = false; state.busyStep = ''; clearInterval(state.pollTimer); state.pollTimer = null;
       setStatus('就绪');
       document.querySelectorAll('.progress-bar').forEach(e => e.style.display = 'none');
       await refreshCurrentStep();
@@ -86,9 +95,9 @@ const refreshCurrentStep = async () => {
   // 拉取最新数据
   switch (state.step) {
     case 1: { const d = await api('/api/torrents'); if (d) state.torrents = d.torrents; break; }
-    case 2: { const d = await api('/api/tmdb/results'); if (d) state.matches = d.matches; break; }
-    case 3: { const d = await api('/api/analyze/profiles'); if (d) state.profiles = d.profiles; break; }
-    case 4: { const d = await api('/api/dedup/results'); if (d) { state.dedup = d.groups; state.overview = d.summary; } break; }
+    case 2: { const d = await api('/api/tmdb/results'); if (d) state.matches = d.matches; const t = await api('/api/torrents'); if (t) state.torrents = t.torrents; break; }
+    case 3: { const d = await api('/api/analyze/profiles'); if (d) state.profiles = d.profiles; const t = await api('/api/torrents'); if (t) state.torrents = t.torrents; break; }
+    case 4: { const d = await api('/api/dedup/results'); if (d) { state.dedup = d.groups; state.overview = d.summary; } const t = await api('/api/torrents'); if (t) state.torrents = t.torrents; break; }
   }
   // 用 renderContent 重新渲染（自动传入正确的 container）
   await renderContent();
@@ -98,12 +107,12 @@ window.switchStep = async (idx) => {
   state.step = idx;
   document.querySelectorAll('.step').forEach((e, i) => e.className = 'step' + (i === idx ? ' active' : ''));
   if (idx === 1) { const d = await api('/api/torrents'); if (d) state.torrents = d.torrents; }
-  else if (idx === 2) { const d = await api('/api/tmdb/results'); if (d) state.matches = d.matches; }
-  else if (idx === 3) { const d = await api('/api/analyze/profiles'); if (d) state.profiles = d.profiles; }
-  else if (idx === 4) { const d = await api('/api/dedup/results'); if (d) { state.dedup = d.groups; state.overview = d.summary; } }
+  else if (idx === 2) { const d = await api('/api/tmdb/results'); if (d) state.matches = d.matches; const t = await api('/api/torrents'); if (t) state.torrents = t.torrents; }
+  else if (idx === 3) { const d = await api('/api/analyze/profiles'); if (d) state.profiles = d.profiles; const t = await api('/api/torrents'); if (t) state.torrents = t.torrents; }
+  else if (idx === 4) { const d = await api('/api/dedup/results'); if (d) { state.dedup = d.groups; state.overview = d.summary; } const t = await api('/api/torrents'); if (t) state.torrents = t.torrents; }
   await renderContent();
   const p = await api('/api/progress');
-  if (p && p.running) { state.busy = true; startPolling(); }
+  if (p && p.running) { state.busy = true; state.busyStep = p.current_step; startPolling(); }
 };
 
 const renderContent = async () => {
@@ -137,14 +146,14 @@ function fixStickyHeaders() {
     const header = document.createElement('div');
     header.className = 'sticky-header-fixed';
     header._card = card;
-    header.style.cssText = 'position:fixed;z-index:9999;background:#161b22;display:flex;pointer-events:none;';
+    header.style.cssText = 'position:fixed;z-index:9999;background:var(--bg-card);display:flex;pointer-events:none;';
     document.body.appendChild(header);
 
     // 填充表头单元格
     ths.forEach((th, i) => {
       const cell = document.createElement('div');
       cell.textContent = th.textContent;
-      cell.style.cssText = `padding:8px 12px;font-size:13px;color:#8b949e;font-weight:500;border-bottom:1px solid #30363d;flex:0 0 ${widths[i]}px;box-sizing:border-box;text-align:left;`;
+      cell.style.cssText = `padding:8px 12px;font-size:13px;color:var(--text-secondary);font-weight:500;border-bottom:1px solid var(--border);flex:0 0 ${widths[i]}px;box-sizing:border-box;text-align:left;`;
       header.appendChild(cell);
     });
 
@@ -236,12 +245,32 @@ const renderConfig = async (container) => {
         <div class="form-row" style="margin-top:6px" id="cat-checkboxes"></div>
       </div>
     </div>
-    <div class="card"><div class="card-title">SMB 挂载配置</div>
-      <div class="form-row">
-        <div class="form-group"><label>SMB 地址</label><input id="c-sh" value="${d.config.smb_host}"></div>
-        <div class="form-group" style="max-width:120px"><label>共享名称</label><input id="c-ss" value="${d.config.smb_share}"></div>
-        <div class="form-group" style="max-width:120px"><label>用户名</label><input id="c-su" value="${d.config.smb_username}"></div>
-        <div class="form-group" style="max-width:160px"><label>密码</label><input id="c-sp" type="password" value="${d.config.smb_password}"></div>
+    <div class="card"><div class="card-title">文件路径配置</div>
+      <div style="display:flex;gap:12px;margin-bottom:12px">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="radio" name="path-mode" value="local" ${d.config.use_local_path ? 'checked' : ''} onchange="togglePathMode('local')">
+          <span style="font-size:13px">本地路径</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="radio" name="path-mode" value="smb" ${d.config.use_local_path ? '' : 'checked'} onchange="togglePathMode('smb')">
+          <span style="font-size:13px">SMB 远程挂载</span>
+        </label>
+      </div>
+      <div id="smb-fields" style="${d.config.use_local_path ? 'display:none' : ''}">
+        <div class="form-row">
+          <div class="form-group"><label>SMB 地址</label><input id="c-sh" value="${d.config.smb_host}"></div>
+          <div class="form-group" style="max-width:120px"><label>共享名称</label><input id="c-ss" value="${d.config.smb_share}"></div>
+          <div class="form-group" style="max-width:120px"><label>用户名</label><input id="c-su" value="${d.config.smb_username}"></div>
+          <div class="form-group" style="max-width:160px"><label>密码</label><input id="c-sp" type="password" value="${d.config.smb_password}"></div>
+        </div>
+      </div>
+      <div id="local-fields" style="${d.config.use_local_path ? '' : 'display:none'}">
+        <div class="form-row">
+          <div class="form-group"><label>本地路径</label>
+            <input id="c-lp" value="${d.config.local_path || ''}" placeholder="例如: /mnt/storage/downloads">
+            <span class="hint">qBittorrent 下载目录在本地文件系统中的实际路径</span>
+          </div>
+        </div>
       </div>
     </div>
     <div class="card"><div class="card-title">TMDB 配置</div>
@@ -284,6 +313,13 @@ window.toggleCat = (cat) => {
 
 window.testQBAndFetchCats = async () => {
   const el = document.getElementById('qb-test-r'); el.textContent = '测试中...';
+  // 先保存用户填写的 QB 连接参数，确保后续 /api/categories 能复用
+  await api('/api/config', { method: 'PUT', body: JSON.stringify({
+    qb_host: document.getElementById('c-qb-h').value,
+    qb_port: parseInt(document.getElementById('c-qb-p').value),
+    qb_username: document.getElementById('c-qb-u').value,
+    qb_password: document.getElementById('c-qb-pw').value,
+  }) });
   const d = await api('/api/config/test-qb', { method: 'POST', body: JSON.stringify({
     qb_host: document.getElementById('c-qb-h').value, qb_port: parseInt(document.getElementById('c-qb-p').value),
     qb_username: document.getElementById('c-qb-u').value, qb_password: document.getElementById('c-qb-pw').value }) });
@@ -317,6 +353,13 @@ function showConfigMsg(msg, type) {
   el.style.display = 'block';
 }
 
+window.togglePathMode = (mode) => {
+  const smb = document.getElementById('smb-fields');
+  const local = document.getElementById('local-fields');
+  if (smb) smb.style.display = mode === 'smb' ? '' : 'none';
+  if (local) local.style.display = mode === 'local' ? '' : 'none';
+};
+
 window.verifyAndGo = async () => {
   const btn = document.getElementById('btn-go'); btn.disabled = true;
   showConfigMsg('验证中...', 'success');
@@ -330,15 +373,25 @@ window.verifyAndGo = async () => {
   }
 
   // Save config first
-  await api('/api/config', { method: 'PUT', body: JSON.stringify({
+  const useLocal = document.querySelector('input[name="path-mode"]:checked').value === 'local';
+  const cfg = {
     qb_host: document.getElementById('c-qb-h').value, qb_port: parseInt(document.getElementById('c-qb-p').value),
     qb_username: document.getElementById('c-qb-u').value, qb_password: document.getElementById('c-qb-pw').value,
-    smb_host: document.getElementById('c-sh').value, smb_share: document.getElementById('c-ss').value,
-    smb_username: document.getElementById('c-su').value, smb_password: document.getElementById('c-sp').value,
     tmdb_api_key: document.getElementById('c-tk').value, tmdb_rate_limit: parseFloat(document.getElementById('c-tr').value) || 0.2,
     categories: state.config?.categories || [],
     collection_strategy: document.getElementById('c-col').value,
-    min_file_size_mb: parseInt(document.getElementById('c-ms').value) || 300 }) });
+    min_file_size_mb: parseInt(document.getElementById('c-ms').value) || 300,
+    use_local_path: useLocal,
+  };
+  if (useLocal) {
+    cfg.local_path = document.getElementById('c-lp').value;
+  } else {
+    cfg.smb_host = document.getElementById('c-sh').value;
+    cfg.smb_share = document.getElementById('c-ss').value;
+    cfg.smb_username = document.getElementById('c-su').value;
+    cfg.smb_password = document.getElementById('c-sp').value;
+  }
+  await api('/api/config', { method: 'PUT', body: JSON.stringify(cfg) });
 
   // Verify
   const v = await api('/api/config/verify', { method: 'POST' });
@@ -361,9 +414,8 @@ const renderFetch = (container) => {
   const hasData = count > 0;
   const filtered = state.collectionFilter ? state.torrents.filter(t => t.is_collection) : state.torrents;
   container.innerHTML = `
-    <h2>📥 获取种子</h2>
-    <p class="desc">从 qBittorrent 拉取种子列表</p>
-    <div class="card"><div class="card-title">操作</div>
+    <h2>📥 获取种子 <span class="desc">从 qBittorrent 拉取种子列表</span></h2>
+    <div class="card">
       <div class="btn-row"><button class="btn btn-primary" onclick="fetchTorrents()" id="btn-fetch">🚀 开始获取</button>
         <button class="btn" onclick="switchStep(2)" id="btn-next-1" ${hasData ? '' : 'disabled'}>➡️ 进入TMDB匹配</button>
         <span class="task-status" style="font-size:13px;color:#8b949e;"></span></div>
@@ -376,8 +428,8 @@ const renderFetch = (container) => {
         <div class="label">${state.collectionFilter ? '▼ 合集（点击显示全部）' : '合集'}</div>
       </div>
     </div>
-    <div class="card" style="max-height:500px;overflow-y:auto;position:relative;z-index:0">
-      ${state.collectionFilter ? '<div style="padding:8px 0;font-size:12px;color:#d29922">仅显示合集种子（共 ' + collCount + ' 个）</div>' : ''}
+    <div class="card" style="max-height:600px;overflow-y:auto;position:relative;z-index:0">
+      ${state.collectionFilter ? '<div style="padding:8px 0;font-size:12px;color:var(--gold)">仅显示合集种子（共 ' + collCount + ' 个）</div>' : ''}
       <table><thead><tr><th style="min-width:350px">名称</th><th>分类</th><th>大小</th><th>类型</th></tr></thead>
       <tbody>${filtered.map(t => `<tr><td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${t.name}">${t.name}</td><td><span class="tag tag-blue">${t.category}</span></td><td>${fmtSize(t.size)}</td><td>${t.is_collection ? '<span class="tag tag-gold">合集</span>' : '<span class="tag tag-gray">单集</span>'}</td></tr>`).join('')}</tbody>
         </table>
@@ -422,12 +474,14 @@ const renderTmdb = (container) => {
   const hasData = displayList.length > 0;
   const filtered = state.tmdbFilter ? displayList.filter(m => !m.tmdb_id || m.tmdb_id === '') : displayList;
   container.innerHTML = `
-    <h2>🏷️ TMDB 匹配</h2>
-    <p class="desc">从种子名称提取电影名和年份，匹配 TMDB 获取电影 ID</p>
-    <div class="card"><div class="card-title">操作</div>
+    <h2>🏷️ TMDB 匹配 <span class="desc">从种子名称提取电影名和年份，匹配 TMDB 获取电影 ID</span></h2>
+    <div class="card">
       <div class="btn-row">
-        <button class="btn btn-primary" onclick="startTmdb()" id="btn-tmdb" ${state.torrents.length === 0 ? 'disabled' : ''}>🏷️ 开始匹配</button>
-        <button class="btn" onclick="togglePause()" id="btn-pause" style="display:none">⏸️ 暂停</button>
+        ${state.busy && state.busyStep === 'tmdb'
+          ? `<button class="btn btn-danger" onclick="stopTmdb()" id="btn-tmdb-stop">⏹️ 停止匹配</button>
+             <button class="btn" onclick="togglePause()" id="btn-pause">⏸️ 暂停</button>`
+          : `<button class="btn btn-primary" onclick="startTmdb()" id="btn-tmdb" ${state.torrents.length === 0 ? 'disabled' : ''}>🏷️ 开始匹配</button>
+             <button class="btn" onclick="togglePause()" id="btn-pause" style="display:none">⏸️ 暂停</button>`}
         <button class="btn" onclick="switchStep(3)" id="btn-next-2" ${hasData ? '' : 'disabled'}>➡️ 进入深度分析</button>
         <span class="task-status" style="font-size:13px;color:#8b949e;"></span></div>
       <div class="progress-bar" style="display:none"><div class="fill" style="width:0%"></div></div>
@@ -442,17 +496,17 @@ const renderTmdb = (container) => {
       </div>
     </div>
     <div class="card" style="max-height:600px;overflow-y:auto;position:relative">
-      ${state.tmdbFilter ? '<div style="padding:8px 0;font-size:12px;color:#f85149">仅显示未匹配种子，可手动填写 TMDB ID</div>' : ''}
+      ${state.tmdbFilter ? '<div style="padding:8px 0;font-size:12px;color:var(--red)">仅显示未匹配种子，可手动填写 TMDB ID</div>' : ''}
       <table><thead><tr><th>状态</th><th style="min-width:300px">种子名</th><th>TMDB ID</th><th style="max-width:120px">中文名</th><th>年代</th><th>评分</th></tr></thead>
       <tbody id="tmdb-tbody">${filtered.map(m => {
-        const status = m.tmdb_id ? '✅' : (state.busy ? '⏳' : '⬜');
+        const status = m.tmdb_id ? '✅' : (state.busy && state.busyStep === 'tmdb' ? '⏳' : '⬜');
         const rating = m.tmdb_rating ? `<span class="tag ${parseFloat(m.tmdb_rating) >= 7 ? 'tag-green' : parseFloat(m.tmdb_rating) >= 5 ? 'tag-gold' : 'tag-red'}">${m.tmdb_rating}</span>` : '-';
         return `<tr id="row-${m.torrent_hash}">
           <td style="text-align:center;font-size:16px">${status}</td>
           <td title="${m.torrent_name}" style="max-width:350px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.torrent_name}</td>
           <td>${m.tmdb_id
             ? `<div style="display:flex;gap:4px;align-items:center"><span class="tag tag-green" style="cursor:pointer" onclick="editTmdbId('${m.torrent_hash}')" id="tid-${m.torrent_hash}">${m.tmdb_id} ✏️</span></div>`
-            : `<div style="display:flex;gap:4px;align-items:center"><input id="mid-${m.torrent_hash}" placeholder="填写ID" style="width:80px;padding:3px 6px;border:1px solid #30363d;border-radius:4px;background:#0d1117;color:#e1e4e8;font-size:12px"><button class="btn btn-sm" onclick="saveManualId('${m.torrent_hash}')">确认</button></div>`}
+            : `<div style="display:flex;gap:4px;align-items:center"><input id="mid-${m.torrent_hash}" placeholder="填写ID" style="width:80px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-input);color:var(--text-primary);font-size:12px"><button class="btn btn-sm" onclick="saveManualId('${m.torrent_hash}')">确认</button></div>`}
           </td>
           <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.tmdb_title_cn||'-'}</td>
           <td>${m.tmdb_year||m.parsed_year||m.torrent_name.match(/\b(19\d{2}|20\d{2})\b/g)?.slice(-1)[0]||'-'}</td>
@@ -461,9 +515,6 @@ const renderTmdb = (container) => {
       }).join('')}</tbody></table>
     </div>` : ''}`
   ;
-  // 显示暂停按钮（如果正在运行）
-  const bp = document.getElementById('btn-pause');
-  if (bp) bp.style.display = state.busy ? 'inline-flex' : 'none';
 };
 
 window.togglePause = async () => {
@@ -504,7 +555,7 @@ window.editTmdbId = (hash) => {
   const currentId = el.textContent.replace(' ✏️', '').trim();
   // 将标签替换为输入框
   el.outerHTML = `<div style="display:flex;gap:4px;align-items:center" id="tid-${hash}">
-    <input id="mid-${hash}" value="${currentId}" placeholder="填写ID" style="width:80px;padding:3px 6px;border:1px solid #58a6ff;border-radius:4px;background:#0d1117;color:#e1e4e8;font-size:12px">
+    <input id="mid-${hash}" value="${currentId}" placeholder="填写ID" style="width:80px;padding:3px 6px;border:1px solid var(--blue);border-radius:4px;background:var(--bg-input);color:var(--text-primary);font-size:12px">
     <button class="btn btn-sm" onclick="saveManualId('${hash}')">确认</button>
     <button class="btn btn-sm" onclick="cancelEditTmdbId('${hash}', '${currentId}')">取消</button>
   </div>`;
@@ -519,12 +570,25 @@ window.cancelEditTmdbId = (hash, currentId) => {
 };
 
 window.startTmdb = async () => {
-  document.getElementById('btn-tmdb').disabled = true;
   document.querySelector('.task-status').textContent = '匹配中...';
   document.querySelector('.progress-bar').style.display = 'block';
   startPolling();
   const d = await api('/api/tmdb/match', { method: 'POST' });
-  if (!d || d.status !== 'ok') { document.getElementById('btn-tmdb').disabled = false; showToast(d?.error || '匹配失败', 'error'); }
+  if (!d || d.status !== 'ok') {
+    document.querySelector('.task-status').textContent = '';
+    document.querySelector('.progress-bar').style.display = 'none';
+    showToast(d?.error || '匹配失败', 'error');
+  } else {
+    state.busy = true; state.busyStep = 'tmdb';
+    renderTmdb(document.getElementById('content'));
+  }
+};
+
+window.stopTmdb = async () => {
+  const btn = document.getElementById('btn-tmdb-stop');
+  if (btn) btn.disabled = true;
+  showToast('正在停止匹配...', 'info');
+  await api('/api/tmdb/stop', { method: 'POST' });
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -550,12 +614,14 @@ const renderAnalyze = (container) => {
   const dvCount = profileList.filter(p => p.hdr_level && p.hdr_level.startsWith('dv')).length;
 
   container.innerHTML = `
-    <h2>🔍 深度分析</h2>
-    <p class="desc">通过 SMB 挂载读取视频文件，MediaInfo 提取音轨、字幕、HDR 信息</p>
-    <div class="card"><div class="card-title">操作</div>
+    <h2>🔍 深度分析 <span class="desc">通过读取原始视频文件，深度分析，提取音轨、字幕、HDR 等信息</span></h2>
+    <div class="card">
       <div class="btn-row">
-        <button class="btn btn-primary" onclick="startAnalyze()" id="btn-analyze" ${state.torrents.length === 0 ? 'disabled' : ''}>🔍 开始分析</button>
-        <button class="btn" onclick="switchStep(4)" id="btn-next-3" ${count > 0 ? '' : 'disabled'}>➡️ 进入去重筛选</button>
+        ${state.busy && state.busyStep === 'analyze'
+          ? `<button class="btn btn-danger" onclick="stopAnalyze()" id="btn-analyze-stop">⏹️ 停止分析</button>
+             <button class="btn" onclick="toggleAnalyzePause()" id="btn-analyze-pause">⏸️ 暂停</button>`
+          : `<button class="btn btn-primary" onclick="startAnalyze()" id="btn-analyze" ${state.torrents.length === 0 ? 'disabled' : ''}>🔍 开始分析</button>
+             <button class="btn" onclick="switchStep(4)" id="btn-next-3" ${count > 0 ? '' : 'disabled'}>➡️ 进入去重筛选</button>`}
         <span class="task-status" style="font-size:13px;color:#8b949e;"></span></div>
       <div class="progress-bar" style="display:none"><div class="fill" style="width:0%"></div></div>
       <div class="progress-text" style="display:none"></div>
@@ -565,7 +631,7 @@ const renderAnalyze = (container) => {
       <div class="stat-card"><div class="num" style="color:#3fb950">${atmosCount}</div><div class="label">中文全景声</div></div>
       <div class="stat-card"><div class="num" style="color:#d29922">${dvCount}</div><div class="label">杜比视界</div></div>
     </div>
-    <div class="card" style="max-height:700px;overflow-y:auto;position:relative">
+    <div class="card" style="max-height:600px;overflow-y:auto;position:relative">
       ${profileList.map(p => {
         const rating = p.tmdb_rating ? `<span class="tag ${parseFloat(p.tmdb_rating) >= 7 ? 'tag-green' : parseFloat(p.tmdb_rating) >= 5 ? 'tag-gold' : 'tag-red'}">${p.tmdb_rating}</span>` : '';
         const collTag = p.is_collection ? '<span class="tag tag-gold" style="margin-left:6px">合集</span>' : '';
@@ -608,13 +674,35 @@ const renderAnalyze = (container) => {
 };
 
 window.startAnalyze = async () => {
-  document.getElementById('btn-analyze').disabled = true;
   document.querySelector('.task-status').textContent = '分析中...';
   document.querySelector('.progress-bar').style.display = 'block';
   document.querySelector('.progress-text').style.display = 'block';
   startPolling();
   const d = await api('/api/analyze/start', { method: 'POST' });
-  if (!d || d.status !== 'ok') { document.getElementById('btn-analyze').disabled = false; showToast(d?.error || '分析失败', 'error'); }
+  if (!d || d.status !== 'ok') {
+    document.querySelector('.task-status').textContent = '';
+    document.querySelector('.progress-bar').style.display = 'none';
+    document.querySelector('.progress-text').style.display = 'none';
+    showToast(d?.error || '分析失败', 'error');
+  } else {
+    state.busy = true; state.busyStep = 'analyze';
+    renderAnalyze(document.getElementById('content'));
+  }
+};
+
+window.stopAnalyze = async () => {
+  const btn = document.getElementById('btn-analyze-stop');
+  if (btn) btn.disabled = true;
+  showToast('正在停止分析...', 'info');
+  await api('/api/analyze/stop', { method: 'POST' });
+};
+
+window.toggleAnalyzePause = async () => {
+  const d = await api('/api/analyze/pause', { method: 'POST' });
+  const btn = document.getElementById('btn-analyze-pause');
+  if (d && btn) {
+    btn.textContent = d.paused ? '▶️ 继续' : '⏸️ 暂停';
+  }
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -630,7 +718,7 @@ const DEFAULT_PRIORITY = {
 };
 
 const PRIORITY_LABELS = {
-  audio: { chinese_atmos:'国语全景声', chinese_audio:'国语', english_atmos:'英语全景声', english_audio:'英语', none:'其他音轨' },
+  audio: { chinese_atmos:'国语全景声', chinese_audio:'国语', english_atmos:'英语全景声', english_audio:'英语', none:'其他音轨', other:'其他音轨' },
   subtitle: { chinese_forced:'中文特效字幕', chinese_sub:'中文字幕', none:'其他字幕' },
   source: { bluray:'BluRay', webdl:'WEB-DL', other:'其他来源' },
   resolution: { '2160p':'4K', '1080p':'1080p', other:'其他分辨率' },
@@ -656,17 +744,14 @@ async function loadPriorityConfig() {
 const renderDedup = async (container) => {
   await loadPriorityConfig();
   container.innerHTML = `
-    <h2>🎯 去重筛选</h2>
-    <p class="desc">配置优先级规则后执行去重操作</p>
-    <div class="card" id="priority-config">
-      <div class="card-title">优先级规则配置（拖拽或点击箭头调整顺序）</div>
-      <div id="priority-layers" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px"></div>
-    </div>
-    <div class="card"><div class="card-title">操作</div>
+    <h2>🎯 去重筛选 <span class="desc">配置优先级规则后执行去重操作（点击箭头调整顺序）</span></h2>
+    <div id="priority-layers" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px"></div>
+    <div class="card">
       <div class="btn-row">
         <button class="btn btn-primary" onclick="runDedup()" id="btn-dedup" ${state.profiles.length === 0 ? 'disabled' : ''}>🎯 开始去重</button>
         <button class="btn" onclick="switchStep(5)" id="btn-next-4" disabled>➡️ 确认选择进入清理删除</button>
         <span class="task-status" style="font-size:13px;color:#8b949e;"></span></div>
+      <div style="margin-top:6px;font-size:11px;color:var(--text-secondary);line-height:1.6">请您仔细核对需要删除的种子，删除后不可恢复，请谨慎操作。如果种子识别错误，可在TMDB匹配页面填写正确的TMDB ID，重新点击开始去重。</div>
     </div>
     <div id="dedup-results"></div>`;
   renderPriorityCards();
@@ -690,11 +775,11 @@ const renderPriorityCards = () => {
     return `<div class="card" style="flex:1;min-width:160px;padding:12px;margin:0">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
         <button class="btn btn-sm" onclick="moveLayer(${li},-1)" ${li===0?'disabled':''} style="padding:4px 8px;font-size:14px">&#x25C0;</button>
-        <span style="font-weight:600;font-size:13px;color:#f0f6fc">${LAYER_LABELS[layer]||layer}</span>
+        <span style="font-weight:600;font-size:13px;color:var(--text-heading)">${LAYER_LABELS[layer]||layer}</span>
         <button class="btn btn-sm" onclick="moveLayer(${li},1)" ${li===priorityState.layers.length-1?'disabled':''} style="padding:4px 8px;font-size:14px">&#x25B6;</button>
       </div>
       <div style="display:flex;flex-direction:column;gap:3px">
-        ${items.map((item, ii) => `<div class="priority-item" style="display:flex;align-items:center;justify-content:space-between;padding:4px 6px;background:#0d1117;border-radius:4px;font-size:12px;color:#c9d1d9">
+        ${items.map((item, ii) => `<div class="priority-item" style="display:flex;align-items:center;justify-content:space-between;padding:4px 6px;background:var(--bg-input);border-radius:4px;font-size:12px;color:var(--text-primary)">
           <span>${PRIORITY_LABELS[layer]?.[item]||item}</span>
           <div style="display:flex;gap:3px">
             <button class="btn btn-sm" onclick="moveItem('${layer}',${ii},-1)" ${ii===0?'disabled':''} style="padding:2px 5px;font-size:10px">&#x25B2;</button>
@@ -725,9 +810,28 @@ window.moveItem = (layer, idx, dir) => {
 const renderDedupResults = () => {
   const el = document.getElementById('dedup-results');
   if (!state.overview) return;
+  // 根据 keepOverrides 实时计算待删除数量
+  let deleteCount = 0;
+  for (const g of state.dedup) {
+    const keep = g.keep;
+    // 检查默认保留的影片是否被用户切换为删除
+    if (keep) {
+      const kkey = `${keep.torrent_hash}|${keep.file_index}`;
+      if (state.keepOverrides[kkey] === false) deleteCount++;
+    }
+    // 检查默认删除的影片
+    for (const p of (g.delete || [])) {
+      const key = `${p.torrent_hash}|${p.file_index}`;
+      const override = state.keepOverrides[key];
+      if (override === true) continue; // 用户手动改为保留
+      if (override === false || (override === undefined && p.torrent_hash !== keep?.torrent_hash)) {
+        deleteCount++;
+      }
+    }
+  }
   el.innerHTML = `
     <div class="stats-row">
-      <div class="stat-card"><div class="num" style="color:#f85149">${state.overview.delete_candidates}</div><div class="label">待删除</div></div>
+      <div class="stat-card"><div class="num" style="color:${deleteCount > 0 ? '#f85149' : 'var(--green)'}">${deleteCount}</div><div class="label">待删除</div></div>
       <div class="stat-card"><div class="num">${state.overview.duplicate_groups}</div><div class="label">重复组</div></div>
       <div class="stat-card"><div class="num">${state.overview.total_groups}</div><div class="label">总电影</div></div>
     </div>
@@ -798,6 +902,14 @@ const renderCleanup = (container) => {
   const deleteList = [];
   for (const g of state.dedup) {
     const keep = g.keep;
+    // 默认保留的影片被切换为删除
+    if (keep) {
+      const kkey = `${keep.torrent_hash}|${keep.file_index}`;
+      if (state.keepOverrides[kkey] === false) {
+        if (!deleteList.find(x => x.torrent_hash === keep.torrent_hash)) deleteList.push(keep);
+      }
+    }
+    // 默认删除的影片
     for (const p of (g.delete || [])) {
       const key = `${p.torrent_hash}|${p.file_index}`;
       const override = state.keepOverrides[key];
@@ -865,31 +977,40 @@ window.confirmDelete = async () => {
 // 初始化 - 从后端恢复持久化状态
 // ═══════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', async () => {
-  const restored = await api('/api/state/restore');
-  if (restored && restored.has_data) {
-    state.torrents = restored.torrents || [];
-    state.matches = restored.tmdb_matches || [];
-    state.profiles = restored.profiles || [];
-    state.dedup = restored.dedup_results || [];
-    // 加载配置（用于优先级规则等）
-    const cfg = await api('/api/config');
-    if (cfg) state.config = cfg.config;
-    const savedStep = parseInt(sessionStorage.getItem('qb_step') || restored.current_step || '0');
-    state.step = Math.min(savedStep, 5);
-    document.querySelectorAll('.step').forEach((e, i) => e.className = 'step' + (i === state.step ? ' active' : ''));
-    await renderContent();
-    // 更新进度
-    if (restored.progress && restored.progress.total > 0) {
-      setStatus(restored.progress.message, false);
-    }
-  } else {
-    // 没有持久化数据，显示配置页
-    switchStep(0);
-  }
+  // 清除后端所有旧的任务数据
+  await api('/api/reset', { method: 'POST' });
+  // 加载配置
+  const cfg = await api('/api/config');
+  if (cfg) state.config = cfg.config;
+  state.torrents = [];
+  state.matches = [];
+  state.profiles = [];
+  state.dedup = [];
+  sessionStorage.removeItem('qb_step');
+  switchStep(0);
   // 切换步骤时保存步骤到 sessionStorage
   const origSwitch = window.switchStep;
   window.switchStep = async (idx) => {
     sessionStorage.setItem('qb_step', String(idx));
     return origSwitch(idx);
   };
+
+  // 恢复主题偏好
+  applyTheme(localStorage.getItem('qb_theme') || 'light');
 });
+
+// ─── 主题切换 ───────────────────────────────────────────────────
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme') || 'dark';
+  const next = current === 'dark' ? 'light' : 'dark';
+  localStorage.setItem('qb_theme', next);
+  applyTheme(next);
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  const icon = document.getElementById('themeIcon');
+  const label = document.getElementById('themeLabel');
+  if (icon) icon.innerHTML = theme === 'dark' ? '&#x1F319;' : '&#x2600;&#xFE0F;';
+  if (label) label.textContent = theme === 'dark' ? '浅色' : '深色';
+}

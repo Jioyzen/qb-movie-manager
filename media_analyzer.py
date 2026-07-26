@@ -25,7 +25,7 @@ COLLECTION_KEYWORDS = re.compile(
     r"\b\d{1,2}\s*(film|movie|disc|dvd)\s*(collection|box|pack)?\b|"
     r"\b\d{1,2}-Film\b|\b\d{1,2}-\d{1,2}\b|"
     r"\bComplete\s+(Collection|Series|Box|Pack|Set|Bundle)\b|"
-    r"Anthology|Bundle|套装|全集?)",
+    r"Anthology|Bundle|套装|全集)",
     re.I,
 )
 
@@ -471,6 +471,8 @@ def is_collection_seed(seed_name: str) -> bool:
 def analyze_torrents(
     torrents: list[dict],
     progress_callback=None,
+    control_callback=None,
+    collection_check=None,
 ) -> list[MediaProfile]:
     """
     Analyze a list of torrents.
@@ -481,21 +483,34 @@ def analyze_torrents(
       3. For single-movie torrents: analyze the largest video file
       4. For collection torrents: analyze each video file as a separate movie
 
+    control_callback: called before each iteration, returns True to stop.
+    collection_check: callable(torrent_hash) -> bool, 由获取种子阶段传入的合集判断。
+                     不传入时回退到文件名关键词检测。
+
     Returns a list of MediaProfile, one per movie (not per torrent).
     """
-    mount_point = config.get("smb_mount_point")
     min_size_mb = config.get("min_file_size_mb", 300)
     min_size_bytes = min_size_mb * 1024 * 1024
 
-    # Mount SMB
-    if not _ensure_mount(mount_point):
-        print("[media_analyzer] SMB mount failed, falling back to filename-only", flush=True)
-        return _analyze_filename_only(torrents, progress_callback)
+    use_local = config.get("use_local_path", False)
+    if use_local:
+        mount_point = config.get("local_path", "")
+        if not mount_point or not os.path.isdir(mount_point):
+            print("[media_analyzer] Local path not found, falling back to filename-only", flush=True)
+            return _analyze_filename_only(torrents, progress_callback, control_callback)
+    else:
+        mount_point = config.get("smb_mount_point")
+        # Mount SMB
+        if not _ensure_mount(mount_point):
+            print("[media_analyzer] SMB mount failed, falling back to filename-only", flush=True)
+            return _analyze_filename_only(torrents, progress_callback, control_callback)
 
     all_profiles = []
     total = len(torrents)
 
     for idx, torrent in enumerate(torrents):
+        if control_callback and control_callback():
+            break
         if progress_callback:
             progress_callback(idx, total, torrent.get("name", ""))
 
@@ -503,7 +518,7 @@ def analyze_torrents(
         seed_name = torrent.get("name", "")
         save_path = torrent.get("save_path", "")
         category = torrent.get("category", "")
-        is_collection = is_collection_seed(seed_name)
+        is_collection = collection_check(hash_val) if collection_check else is_collection_seed(seed_name)
 
         # Get file list from qBittorrent API
         files = _get_torrent_files(hash_val)
@@ -563,16 +578,27 @@ def _analyze_single_video_file(torrent: dict, vf: dict, mount_point: str, save_p
     # qB file "name" is relative to save_path/torrent_name
     # e.g. "Casino.Royale.2006/Casino.Royale.2006.mkv" or just "movie.mkv"
     file_rel_path = vf.get("name", "")
-    
-    # Build SMB path: mount_point + save_path_without_prefix + file_rel_path
-    prefix = config.get("qb_download_prefix")
-    if save_path.startswith(prefix):
-        relative = save_path[len(prefix):].lstrip("/")
+
+    use_local = config.get("use_local_path", False)
+    if use_local:
+        # 本地路径：直接拼接 save_path + file_rel_path
+        # qBittorrent save_path 就是本地真实路径
+        prefix = config.get("qb_download_prefix")
+        if save_path.startswith(prefix):
+            relative = save_path[len(prefix):].lstrip("/")
+        else:
+            relative = save_path.lstrip("/")
+        full_path = os.path.join(mount_point, relative, file_rel_path)
     else:
-        relative = save_path.lstrip("/")
-    
-    # If file_rel_path already starts with torrent name, don't add it again
-    full_path = os.path.join(mount_point, relative, file_rel_path)
+        # Build SMB path: mount_point + save_path_without_prefix + file_rel_path
+        prefix = config.get("qb_download_prefix")
+        if save_path.startswith(prefix):
+            relative = save_path[len(prefix):].lstrip("/")
+        else:
+            relative = save_path.lstrip("/")
+
+        # If file_rel_path already starts with torrent name, don't add it again
+        full_path = os.path.join(mount_point, relative, file_rel_path)
 
     file_name = os.path.basename(file_rel_path)
     file_name_noext = os.path.splitext(file_name)[0]
@@ -722,11 +748,14 @@ def _analyze_by_filename(torrent: dict) -> Optional[MediaProfile]:
 def _analyze_filename_only(
     torrents: list[dict],
     progress_callback=None,
+    control_callback=None,
 ) -> list[MediaProfile]:
     """Fallback when SMB is unavailable."""
     all_profiles = []
     total = len(torrents)
     for idx, torrent in enumerate(torrents):
+        if control_callback and control_callback():
+            break
         if progress_callback:
             progress_callback(idx, total, torrent.get("name", ""))
         mp = _analyze_by_filename(torrent)
@@ -738,6 +767,8 @@ def _analyze_filename_only(
 
 
 def unmount_smb():
+    if config.get("use_local_path", False):
+        return
     mount_point = config.get("smb_mount_point")
     if os.path.ismount(mount_point):
         try:
