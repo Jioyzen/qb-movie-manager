@@ -265,20 +265,19 @@ const renderConfig = async (container) => {
         </div>
       </div>
       <div id="local-fields" style="${d.config.use_local_path ? '' : 'display:none'}">
-        <div class="form-row">
-          <div class="form-group"><label>主路径（默认，QB 下载前缀 /downloads）</label>
-            <input id="c-lp" value="${d.config.local_path || ''}" placeholder="例如: /data">
-            <span class="hint">qBittorrent 下载目录在容器/宿主机中的实际路径</span>
-          </div>
-        </div>
-        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px">多目录映射（如果 QB 绑定了多个下载目录，在此添加对应关系）</div>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">配置本机路径与 qBittorrent 下载路径的对应关系，至少配置一条</div>
         <div id="path-mappings">
-          ${(d.config.local_path_mappings || []).map((m, i) => `
-            <div class="form-row" id="pm-row-${i}" style="align-items:end">
-              <div class="form-group" style="max-width:140px"><label>QB 前缀</label><input class="pm-prefix" value="${m.prefix || ''}" placeholder="/downloads2"></div>
-              <div class="form-group"><label>本地路径</label><input class="pm-path" value="${m.path || ''}" placeholder="/vol2/..."></div>
-              <button class="btn btn-sm" onclick="removePathMapping(${i})" style="margin-bottom:8px">✕</button>
-            </div>`).join('')}
+          ${(() => {
+            const mappings = d.config.path_mappings && d.config.path_mappings.length > 0
+              ? d.config.path_mappings
+              : (d.config.local_path ? [{local_path: d.config.local_path, qb_prefix: d.config.qb_download_prefix || '/downloads'}] : [{local_path: '', qb_prefix: '/downloads'}]);
+            return mappings.map((m, i) => `
+              <div class="form-row" id="pm-row-${i}" style="align-items:end">
+                <div class="form-group"><label>本机路径</label><input class="pm-local" value="${m.local_path || ''}" placeholder="/mnt/downloads 或 /data"></div>
+                <div class="form-group" style="max-width:160px"><label>QB 前缀</label><input class="pm-qb" value="${m.qb_prefix || '/downloads'}" placeholder="/downloads"></div>
+                <button class="btn btn-sm" onclick="removePathMapping(${i})" ${mappings.length <= 1 ? 'disabled style="opacity:0.3;cursor:not-allowed"' : ''} style="margin-bottom:8px">✕</button>
+              </div>`).join('');
+          })()}
         </div>
         <button class="btn btn-sm" onclick="addPathMapping()" style="margin-top:4px">＋ 添加路径映射</button>
       </div>
@@ -379,8 +378,8 @@ window.addPathMapping = () => {
   div.id = `pm-row-${idx}`;
   div.style.alignItems = 'end';
   div.innerHTML = `
-    <div class="form-group" style="max-width:140px"><label>QB 前缀</label><input class="pm-prefix" placeholder="/downloads2"></div>
-    <div class="form-group"><label>本地路径</label><input class="pm-path" placeholder="/vol2/..."></div>
+    <div class="form-group"><label>本机路径</label><input class="pm-local" placeholder="/mnt/downloads 或 /data"></div>
+    <div class="form-group" style="max-width:160px"><label>QB 前缀</label><input class="pm-qb" placeholder="/downloads"></div>
     <button class="btn btn-sm" onclick="removePathMapping(${idx})" style="margin-bottom:8px">✕</button>`;
   el.appendChild(div);
 };
@@ -414,15 +413,19 @@ window.verifyAndGo = async () => {
     use_local_path: useLocal,
   };
   if (useLocal) {
-    cfg.local_path = document.getElementById('c-lp').value;
-    // 收集多路径映射
-    const mappings = [];
+    // 收集路径映射
+    const pathMappings = [];
     document.querySelectorAll('#path-mappings .form-row').forEach(row => {
-      const prefix = row.querySelector('.pm-prefix')?.value?.trim();
-      const path = row.querySelector('.pm-path')?.value?.trim();
-      if (prefix && path) mappings.push({ prefix, path });
+      const localPath = row.querySelector('.pm-local')?.value?.trim();
+      const qbPrefix = row.querySelector('.pm-qb')?.value?.trim();
+      if (localPath && qbPrefix) pathMappings.push({ local_path: localPath, qb_prefix: qbPrefix });
     });
-    cfg.local_path_mappings = mappings;
+    cfg.path_mappings = pathMappings;
+    // 兼容旧字段（用于首次运行后向后兼容）
+    if (pathMappings.length > 0) {
+      cfg.local_path = pathMappings[0].local_path;
+      cfg.qb_download_prefix = pathMappings[0].qb_prefix;
+    }
   } else {
     cfg.smb_host = document.getElementById('c-sh').value;
     cfg.smb_share = document.getElementById('c-ss').value;
