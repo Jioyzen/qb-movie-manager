@@ -229,12 +229,11 @@ const renderConfig = async (container) => {
   state.config = d.config;
   const cats = d.config.categories || [];
   container.innerHTML = `
-    <h2>⚙️ 配置</h2>
-    <p class="desc">配置完成后点击底部按钮进入下一步</p>
+    <h2>⚙️ 配置 <span class="desc">配置完成后点击底部按钮进入下一步</span></h2>
     <div id="config-msg" style="display:none;padding:10px 16px;border-radius:8px;margin-bottom:16px;font-size:13px;"></div>
     <div class="card"><div class="card-title">qBittorrent 连接</div>
       <div class="form-row">
-        <div class="form-group"><label>地址</label><input id="c-qb-h"></div>
+        <div class="form-group" style="max-width:300px"><label>地址</label><input id="c-qb-h"></div>
         <div class="form-group" style="max-width:100px"><label>端口</label><input id="c-qb-p"></div>
         <div class="form-group" style="max-width:120px"><label>用户名</label><input id="c-qb-u"></div>
         <div class="form-group" style="max-width:160px"><label>密码</label><input id="c-qb-pw" type="password"></div>
@@ -266,7 +265,7 @@ const renderConfig = async (container) => {
             if (smbList.length === 0) smbList.push({host: '', share: '', username: '', password: '', qb_prefix: ''});
             return smbList.map((m, i) => `
               <div class="form-row" id="smb-row-${i}" style="align-items:end">
-                <div class="form-group" style="max-width:120px"><label>QB 前缀</label><input class="smb-qb" value="${m.qb_prefix || ''}"></div>
+                <div class="form-group" style="max-width:120px"><label>QB路径前缀</label><input class="smb-qb" value="${m.qb_prefix || ''}"></div>
                 <div class="form-group" style="max-width:140px"><label>SMB 地址</label><input class="smb-host" value="${m.host || ''}"></div>
                 <div class="form-group" style="max-width:100px"><label>共享名称</label><input class="smb-share" value="${m.share || ''}"></div>
                 <div class="form-group" style="max-width:100px"><label>用户名</label><input class="smb-user" value="${m.username || ''}"></div>
@@ -287,7 +286,7 @@ const renderConfig = async (container) => {
             return mappings.map((m, i) => `
               <div class="form-row" id="pm-row-${i}" style="align-items:end">
                 <div class="form-group" style="max-width:300px"><label>本机路径</label><input class="pm-local" value="${m.local_path || ''}"></div>
-                <div class="form-group" style="max-width:160px"><label>QB 前缀</label><input class="pm-qb" value="${m.qb_prefix || ''}"></div>
+                <div class="form-group" style="max-width:160px"><label>QB路径前缀</label><input class="pm-qb" value="${m.qb_prefix || ''}"></div>
                 <button class="btn btn-sm" onclick="removePathMapping(${i})" ${mappings.length <= 1 ? 'disabled style="opacity:0.3;cursor:not-allowed"' : ''} style="margin-bottom:8px">✕</button>
               </div>`).join('');
           })()}
@@ -392,7 +391,7 @@ window.addPathMapping = () => {
   div.style.alignItems = 'end';
   div.innerHTML = `
     <div class="form-group" style="max-width:300px"><label>本机路径</label><input class="pm-local"></div>
-    <div class="form-group" style="max-width:160px"><label>QB 前缀</label><input class="pm-qb"></div>
+    <div class="form-group" style="max-width:160px"><label>QB路径前缀</label><input class="pm-qb"></div>
     <button class="btn btn-sm" onclick="removePathMapping(${idx})" style="margin-bottom:8px">✕</button>`;
   el.appendChild(div);
 };
@@ -411,7 +410,7 @@ window.addSmbMapping = () => {
   div.id = `smb-row-${idx}`;
   div.style.alignItems = 'end';
   div.innerHTML = `
-    <div class="form-group" style="max-width:120px"><label>QB 前缀</label><input class="smb-qb"></div>
+    <div class="form-group" style="max-width:120px"><label>QB路径前缀</label><input class="smb-qb"></div>
     <div class="form-group" style="max-width:140px"><label>SMB 地址</label><input class="smb-host"></div>
     <div class="form-group" style="max-width:100px"><label>共享名称</label><input class="smb-share"></div>
     <div class="form-group" style="max-width:100px"><label>用户名</label><input class="smb-user"></div>
@@ -468,11 +467,11 @@ window.verifyAndGo = async () => {
     document.querySelectorAll('#smb-mappings .form-row').forEach(row => {
       const qb_prefix = row.querySelector('.smb-qb')?.value?.trim();
       const host = row.querySelector('.smb-host')?.value?.trim();
-      const share = row.querySelector('.smb-share')?.value?.trim();
+      const share = row.querySelector('.smb-share')?.value?.trim().replace(/^\/+/, '');
       const username = row.querySelector('.smb-user')?.value?.trim();
       const password = row.querySelector('.smb-pass')?.value;
       if (host && share && qb_prefix) {
-        const mount_point = '/mnt/qb_' + qb_prefix.replace(/^\//, '');
+        const mount_point = '/mnt/qb_' + share.split('/').pop();
         smbMappings.push({ host, share, username, password, mount_point, qb_prefix });
       }
     });
