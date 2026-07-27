@@ -121,16 +121,17 @@ class Config:
             except Exception as e:
                 print(f"[config] Load error: {e}", flush=True)
         else:
-            # 首次启动：尝试从 config.example.json 加载初始值
+            # 首次启动：从 config.example.json 读取初始值，不自动保存
+            # 用户点击"保存配置"时才会生成 config.json
             example_path = os.path.join(os.path.dirname(__file__), "data", "config.example.json")
             if os.path.exists(example_path):
                 try:
                     with open(example_path, "r", encoding="utf-8") as f:
                         example = json.load(f)
                     self._data.update(example)
+                    print(f"[config] Loaded initial values from config.example.json", flush=True)
                 except Exception as e:
                     print(f"[config] Example load error: {e}", flush=True)
-            self.save()
 
     def save(self):
         path = os.path.abspath(CONFIG_PATH)
