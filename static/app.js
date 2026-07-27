@@ -294,22 +294,22 @@ const renderConfig = async (container) => {
     </div>
     <div class="card"><div class="card-title">TMDB 配置</div>
       <div class="form-row">
-        <div class="form-group" style="max-width:300px"><label>API Key</label><input id="c-tk" value="${d.config.tmdb_api_key || \"\"}"></div>
-        <div class="form-group" style="max-width:100px"><label>请求间隔(秒)</label><input id="c-tr" value="${d.config.tmdb_rate_limit || \"\"}"></div>
+        <div class="form-group" style="max-width:300px"><label>API Key</label><input id="c-tk" value="${d.config.tmdb_api_key || ''}"></div>
+        <div class="form-group" style="max-width:100px"><label>请求间隔(秒)</label><input id="c-tr" value="${d.config.tmdb_rate_limit || ''}"></div>
       </div>
       <div class="card-title" style="margin-top:12px">HTTP 代理（可选，TMDB 连接使用）</div>
       <div class="form-row">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-right:12px">
-          <input type="checkbox" id="c-proxy-en" ${d.config.proxy_enabled ? "checked" : } onchange="toggleProxy()">
+          <input type="checkbox" id="c-proxy-en" ${d.config.proxy_enabled ? "checked" : "" } onchange="toggleProxy()">
           <span style="font-size:13px">启用代理</span>
         </label>
       </div>
-      <div id="proxy-fields" style="${d.config.proxy_enabled ?  : "display:none"}">
+      <div id="proxy-fields" style="${d.config.proxy_enabled ? "" : "display:none"}">
         <div class="form-row">
-          <div class="form-group" style="max-width:200px"><label>代理地址</label><input id="c-proxy-h" value="${d.config.proxy_host || }"></div>
-          <div class="form-group" style="max-width:100px"><label>端口</label><input id="c-proxy-p" value="${d.config.proxy_port || }"></div>
-          <div class="form-group" style="max-width:120px"><label>用户名(可选)</label><input id="c-proxy-u" value="${d.config.proxy_username || }"></div>
-          <div class="form-group" style="max-width:120px"><label>密码(可选)</label><input id="c-proxy-pw" type="password" value="${d.config.proxy_password || }"></div>
+          <div class="form-group" style="max-width:200px"><label>代理地址</label><input id="c-proxy-h" value="${d.config.proxy_host || ""}"></div>
+          <div class="form-group" style="max-width:100px"><label>端口</label><input id="c-proxy-p" value="${d.config.proxy_port || ""}"></div>
+          <div class="form-group" style="max-width:120px"><label>用户名(可选)</label><input id="c-proxy-u" value="${d.config.proxy_username || ""}"></div>
+          <div class="form-group" style="max-width:120px"><label>密码(可选)</label><input id="c-proxy-pw" type="password" value="${d.config.proxy_password || ""}"></div>
         </div>
       </div>
     </div>
