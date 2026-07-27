@@ -280,7 +280,7 @@ const renderConfig = async (container) => {
           ${(() => {
             const mappings = d.config.path_mappings && d.config.path_mappings.length > 0
               ? d.config.path_mappings
-              : (d.config.local_path ? [{local_path: d.config.local_path, qb_prefix: d.config.qb_download_prefix || '/downloads'}] : [{local_path: '', qb_prefix: ''}]);
+              : [{local_path: d.config.local_path || '', qb_prefix: d.config.qb_download_prefix || ''}];
             return mappings.map((m, i) => `
               <div class="form-row" id="pm-row-${i}" style="align-items:end">
                 <div class="form-group" style="max-width:160px"><label>QB路径前缀</label><input class="pm-qb" value="${m.qb_prefix || ''}"></div>
