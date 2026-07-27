@@ -333,7 +333,15 @@ window.toggleCat = (cat) => {
 };
 
 window.testQBAndFetchCats = async () => {
-  const el = document.getElementById('qb-test-r'); el.textContent = '测试中...';
+  const el = document.getElementById('qb-test-r');
+  const host = document.getElementById('c-qb-h').value.trim();
+  if (!host) {
+    el.textContent = '❌ 请先填写 qBittorrent 连接信息';
+    el.style.color = '#f85149';
+    return;
+  }
+  el.textContent = '测试中...';
+  el.style.color = '';
   // 先保存用户填写的 QB 连接参数，确保后续 /api/categories 能复用
   await api('/api/config', { method: 'PUT', body: JSON.stringify({
     qb_host: document.getElementById('c-qb-h').value,
