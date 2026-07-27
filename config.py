@@ -3,7 +3,7 @@
 Priority (highest wins):
 1. data/config.json  (runtime persistent config, saved via UI)
 2. .env file         (environment variables, never committed)
-3. DEFAULTS dict     (built-in defaults)
+3. data/config.example.json  (initial defaults, only when config.json missing)
 """
 import json
 import os
@@ -100,7 +100,7 @@ def _get_env_config() -> dict:
 
 class Config:
     def __init__(self):
-        self._data = dict(DEFAULTS)
+        self._data = {}
         # 1. Load .env file overrides
         _load_dotenv()
         self._data.update(_get_env_config())
