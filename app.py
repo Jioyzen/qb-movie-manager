@@ -313,7 +313,16 @@ def api_verify_config():
                     r = subprocess.run(["sudo", "mount", "-t", "cifs", f"//{smb_host}/{smb_share}", mount_point, "-o", opts],
                         capture_output=True, text=True, timeout=15)
                 if r.returncode != 0:
-                    issues.append(f"SMB 挂载失败: {r.stderr.strip()}")
+                    err_msg = r.stderr.strip() if r.stderr else "未知错误"
+                    if "Permission denied" in err_msg or "not permitted" in err_msg:
+                        err_msg = "用户无挂载权限，可尝试在宿主机手动挂载后使用本地路径模式"
+                    elif "mount error(2)" in err_msg or "No such file" in err_msg:
+                        err_msg = f"无法连接到 {smb_host}，请检查地址和网络"
+                    elif "mount error(13)" in err_msg:
+                        err_msg = "SMB 认证失败，请检查用户名和密码"
+                    elif "mount error(112)" in err_msg:
+                        err_msg = f"连接 {smb_host} 超时，请检查网络和防火墙"
+                    issues.append(f"SMB 挂载失败: {err_msg}")
                 elif not os.path.ismount(mount_point):
                     issues.append("SMB 挂载失败，请检查地址和认证信息")
             except Exception as e:
