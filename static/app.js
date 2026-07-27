@@ -262,21 +262,16 @@ const renderConfig = async (container) => {
           ${(() => {
             const smbList = d.config.smb_mappings && d.config.smb_mappings.length > 0
               ? d.config.smb_mappings
-              : (d.config.smb_host ? [{host: d.config.smb_host, share: d.config.smb_share, username: d.config.smb_username, password: '', mount_point: d.config.smb_mount_point || '', qb_prefix: d.config.qb_download_prefix || '/downloads'}] : []);
-            if (smbList.length === 0) smbList.push({host: '', share: '', username: '', password: '', mount_point: '', qb_prefix: ''});
+              : (d.config.smb_host ? [{host: d.config.smb_host, share: d.config.smb_share, username: d.config.smb_username, password: '', qb_prefix: d.config.qb_download_prefix || '/downloads'}] : []);
+            if (smbList.length === 0) smbList.push({host: '', share: '', username: '', password: '', qb_prefix: ''});
             return smbList.map((m, i) => `
-              <div class="smb-mapping-row" id="smb-row-${i}" style="border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px">
-                <div class="form-row" style="margin-bottom:6px">
-                  <div class="form-group"><label>SMB 地址</label><input class="smb-host" value="${m.host || ''}"></div>
-                  <div class="form-group" style="max-width:120px"><label>共享名称</label><input class="smb-share" value="${m.share || ''}"></div>
-                  <div class="form-group" style="max-width:120px"><label>用户名</label><input class="smb-user" value="${m.username || ''}"></div>
-                  <div class="form-group" style="max-width:160px"><label>密码</label><input class="smb-pass" type="password" value="${m.password || ''}"></div>
-                </div>
-                <div class="form-row">
-                  <div class="form-group" style="max-width:300px"><label>挂载点</label><input class="smb-mount" value="${m.mount_point || ''}"></div>
-                  <div class="form-group" style="max-width:160px"><label>QB 前缀</label><input class="smb-qb" value="${m.qb_prefix || ''}"></div>
-                  <button class="btn btn-sm" onclick="removeSmbMapping(${i})" ${smbList.length <= 1 ? 'disabled style="opacity:0.3;cursor:not-allowed"' : ''} style="margin-bottom:8px">✕</button>
-                </div>
+              <div class="form-row" id="smb-row-${i}" style="align-items:end">
+                <div class="form-group" style="max-width:120px"><label>QB 前缀</label><input class="smb-qb" value="${m.qb_prefix || ''}"></div>
+                <div class="form-group" style="max-width:140px"><label>SMB 地址</label><input class="smb-host" value="${m.host || ''}"></div>
+                <div class="form-group" style="max-width:100px"><label>共享名称</label><input class="smb-share" value="${m.share || ''}"></div>
+                <div class="form-group" style="max-width:100px"><label>用户名</label><input class="smb-user" value="${m.username || ''}"></div>
+                <div class="form-group" style="max-width:120px"><label>密码</label><input class="smb-pass" type="password" value="${m.password || ''}"></div>
+                <button class="btn btn-sm" onclick="removeSmbMapping(${i})" ${smbList.length <= 1 ? 'disabled style="opacity:0.3;cursor:not-allowed"' : ''} style="margin-bottom:8px">✕</button>
               </div>`).join('');
           })()}
         </div>
@@ -412,21 +407,16 @@ window.addSmbMapping = () => {
   if (!el) return;
   const idx = el.children.length;
   const div = document.createElement('div');
-  div.className = 'smb-mapping-row';
+  div.className = 'form-row';
   div.id = `smb-row-${idx}`;
-  div.style.cssText = 'border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px';
+  div.style.alignItems = 'end';
   div.innerHTML = `
-    <div class="form-row" style="margin-bottom:6px">
-      <div class="form-group"><label>SMB 地址</label><input class="smb-host"></div>
-      <div class="form-group" style="max-width:120px"><label>共享名称</label><input class="smb-share"></div>
-      <div class="form-group" style="max-width:120px"><label>用户名</label><input class="smb-user"></div>
-      <div class="form-group" style="max-width:160px"><label>密码</label><input class="smb-pass" type="password"></div>
-    </div>
-    <div class="form-row">
-      <div class="form-group" style="max-width:300px"><label>挂载点</label><input class="smb-mount"></div>
-      <div class="form-group" style="max-width:160px"><label>QB 前缀</label><input class="smb-qb"></div>
-      <button class="btn btn-sm" onclick="removeSmbMapping(${idx})" style="margin-bottom:8px">✕</button>
-    </div>`;
+    <div class="form-group" style="max-width:120px"><label>QB 前缀</label><input class="smb-qb"></div>
+    <div class="form-group" style="max-width:140px"><label>SMB 地址</label><input class="smb-host"></div>
+    <div class="form-group" style="max-width:100px"><label>共享名称</label><input class="smb-share"></div>
+    <div class="form-group" style="max-width:100px"><label>用户名</label><input class="smb-user"></div>
+    <div class="form-group" style="max-width:120px"><label>密码</label><input class="smb-pass" type="password"></div>
+    <button class="btn btn-sm" onclick="removeSmbMapping(${idx})" style="margin-bottom:8px">✕</button>`;
   el.appendChild(div);
 };
 
@@ -475,14 +465,14 @@ window.verifyAndGo = async () => {
   } else {
     // 收集 SMB 映射
     const smbMappings = [];
-    document.querySelectorAll('#smb-mappings .smb-mapping-row').forEach(row => {
+    document.querySelectorAll('#smb-mappings .form-row').forEach(row => {
+      const qb_prefix = row.querySelector('.smb-qb')?.value?.trim();
       const host = row.querySelector('.smb-host')?.value?.trim();
       const share = row.querySelector('.smb-share')?.value?.trim();
       const username = row.querySelector('.smb-user')?.value?.trim();
       const password = row.querySelector('.smb-pass')?.value;
-      const mount_point = row.querySelector('.smb-mount')?.value?.trim();
-      const qb_prefix = row.querySelector('.smb-qb')?.value?.trim();
-      if (host && share && mount_point && qb_prefix) {
+      if (host && share && qb_prefix) {
+        const mount_point = '/mnt/qb_' + qb_prefix.replace(/^\//, '');
         smbMappings.push({ host, share, username, password, mount_point, qb_prefix });
       }
     });
