@@ -277,7 +277,6 @@ const renderConfig = async (container) => {
         <button class="btn btn-sm" onclick="addSmbMapping()" style="margin-top:4px">＋ 添加 SMB 映射</button>
       </div>
       <div id="local-fields" style="${d.config.use_local_path ? '' : 'display:none'}">
-        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">配置本机路径与 qBittorrent 下载路径的对应关系，至少配置一条</div>
         <div id="path-mappings">
           ${(() => {
             const mappings = d.config.path_mappings && d.config.path_mappings.length > 0
@@ -285,8 +284,8 @@ const renderConfig = async (container) => {
               : (d.config.local_path ? [{local_path: d.config.local_path, qb_prefix: d.config.qb_download_prefix || '/downloads'}] : [{local_path: '', qb_prefix: ''}]);
             return mappings.map((m, i) => `
               <div class="form-row" id="pm-row-${i}" style="align-items:end">
-                <div class="form-group" style="max-width:300px"><label>本机路径</label><input class="pm-local" value="${m.local_path || ''}"></div>
                 <div class="form-group" style="max-width:160px"><label>QB路径前缀</label><input class="pm-qb" value="${m.qb_prefix || ''}"></div>
+                <div class="form-group" style="max-width:300px"><label>本机路径</label><input class="pm-local" value="${m.local_path || ''}"></div>
                 <button class="btn btn-sm" onclick="removePathMapping(${i})" ${mappings.length <= 1 ? 'disabled style="opacity:0.3;cursor:not-allowed"' : ''} style="margin-bottom:8px">✕</button>
               </div>`).join('');
           })()}
@@ -398,8 +397,8 @@ window.addPathMapping = () => {
   div.id = `pm-row-${idx}`;
   div.style.alignItems = 'end';
   div.innerHTML = `
-    <div class="form-group" style="max-width:300px"><label>本机路径</label><input class="pm-local"></div>
     <div class="form-group" style="max-width:160px"><label>QB路径前缀</label><input class="pm-qb"></div>
+    <div class="form-group" style="max-width:300px"><label>本机路径</label><input class="pm-local"></div>
     <button class="btn btn-sm" onclick="removePathMapping(${idx})" style="margin-bottom:8px">✕</button>`;
   el.appendChild(div);
 };
