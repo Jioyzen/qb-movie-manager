@@ -256,7 +256,6 @@ const renderConfig = async (container) => {
         </label>
       </div>
       <div id="smb-fields" style="${d.config.use_local_path ? 'display:none' : ''}">
-        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">配置 SMB 远程挂载与 qBittorrent 下载路径的对应关系，至少配置一条</div>
         <div id="smb-mappings">
           ${(() => {
             const smbList = d.config.smb_mappings && d.config.smb_mappings.length > 0
@@ -266,7 +265,7 @@ const renderConfig = async (container) => {
             return smbList.map((m, i) => `
               <div class="form-row" id="smb-row-${i}" style="align-items:end">
                 <div class="form-group" style="max-width:120px"><label>QB路径前缀</label><input class="smb-qb" value="${m.qb_prefix || ''}"></div>
-                <div class="form-group" style="max-width:140px"><label>SMB 地址</label><input class="smb-host" value="${m.host || ''}"></div>
+                <div class="form-group" style="max-width:300px"><label>SMB 地址</label><input class="smb-host" value="${m.host || ''}"></div>
                 <div class="form-group" style="max-width:100px"><label>共享名称</label><input class="smb-share" value="${m.share || ''}"></div>
                 <div class="form-group" style="max-width:100px"><label>用户名</label><input class="smb-user" value="${m.username || ''}"></div>
                 <div class="form-group" style="max-width:120px"><label>密码</label><input class="smb-pass" type="password" value="${m.password || ''}"></div>
@@ -418,7 +417,7 @@ window.addSmbMapping = () => {
   div.style.alignItems = 'end';
   div.innerHTML = `
     <div class="form-group" style="max-width:120px"><label>QB路径前缀</label><input class="smb-qb"></div>
-    <div class="form-group" style="max-width:140px"><label>SMB 地址</label><input class="smb-host"></div>
+    <div class="form-group" style="max-width:300px"><label>SMB 地址</label><input class="smb-host"></div>
     <div class="form-group" style="max-width:100px"><label>共享名称</label><input class="smb-share"></div>
     <div class="form-group" style="max-width:100px"><label>用户名</label><input class="smb-user"></div>
     <div class="form-group" style="max-width:120px"><label>密码</label><input class="smb-pass" type="password"></div>
