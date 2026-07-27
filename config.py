@@ -152,6 +152,12 @@ class Config:
 
     def all(self, mask_passwords=True):
         """Return all config, optionally masking password fields."""
+        # 如果 config.json 不存在，重新从 example 加载（无需重启）
+        if not os.path.exists(os.path.abspath(CONFIG_PATH)):
+            self._data = {}
+            _load_dotenv()
+            self._data.update(_get_env_config())
+            self.load()
         d = dict(self._data)
         if mask_passwords:
             for key in PASSWORD_FIELDS:

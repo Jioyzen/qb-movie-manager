@@ -11,6 +11,7 @@
   "smb_share": "downloads",
   "smb_username": "",
   "smb_password": "",
+  "smb_mount_point": "/mnt/qb_downloads",
   "use_local_path": true,
   "local_path": "",
   "qb_download_prefix": "/downloads",
@@ -23,6 +24,5 @@
     "source",
     "resolution",
     "hdr"
-  ],
-  "smb_mount_point": "/mnt/qb_downloads"
+  ]
 }
