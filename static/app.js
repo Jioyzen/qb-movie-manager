@@ -260,7 +260,7 @@ const renderConfig = async (container) => {
           ${(() => {
             const smbList = d.config.smb_mappings && d.config.smb_mappings.length > 0
               ? d.config.smb_mappings
-              : (d.config.smb_host ? [{host: d.config.smb_host, share: d.config.smb_share, username: d.config.smb_username, password: '', qb_prefix: d.config.qb_download_prefix || '/downloads'}] : []);
+              : [{host: d.config.smb_host || '', share: d.config.smb_share || '', username: d.config.smb_username || '', password: '', qb_prefix: d.config.qb_download_prefix || ''}];
             if (smbList.length === 0) smbList.push({host: '', share: '', username: '', password: '', qb_prefix: ''});
             return smbList.map((m, i) => `
               <div class="form-row" id="smb-row-${i}" style="align-items:end">
