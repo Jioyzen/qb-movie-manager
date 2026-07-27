@@ -395,11 +395,13 @@ function showConfigMsg(msg, type) {
   el.style.display = 'block';
 }
 
-window.togglePathMode = (mode) => {
 window.toggleProxy = () => {
   const el = document.getElementById("proxy-fields");
   if (el) el.style.display = document.getElementById("c-proxy-en").checked ? "" : "none";
 };
+
+
+window.togglePathMode = (mode) => {
   const smb = document.getElementById('smb-fields');
   const local = document.getElementById('local-fields');
   if (smb) smb.style.display = mode === 'smb' ? '' : 'none';
