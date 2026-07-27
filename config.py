@@ -158,6 +158,9 @@ class Config:
             _load_dotenv()
             self._data.update(_get_env_config())
             self.load()
+        # 如果仍然为空（example 损坏），提供最小回退值
+        if not self._data:
+            self._data = {"qb_host": "", "qb_port": "", "smb_host": "", "smb_share": ""}
         d = dict(self._data)
         if mask_passwords:
             for key in PASSWORD_FIELDS:
