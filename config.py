@@ -121,6 +121,15 @@ class Config:
             except Exception as e:
                 print(f"[config] Load error: {e}", flush=True)
         else:
+            # 首次启动：尝试从 config.example.json 加载初始值
+            example_path = os.path.join(os.path.dirname(__file__), "data", "config.example.json")
+            if os.path.exists(example_path):
+                try:
+                    with open(example_path, "r", encoding="utf-8") as f:
+                        example = json.load(f)
+                    self._data.update(example)
+                except Exception as e:
+                    print(f"[config] Example load error: {e}", flush=True)
             self.save()
 
     def save(self):
