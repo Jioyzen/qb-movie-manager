@@ -23,5 +23,10 @@
     "source",
     "resolution",
     "hdr"
-  ]
+  ],
+  "proxy_enabled": false,
+  "proxy_host": "",
+  "proxy_port": "",
+  "proxy_username": "",
+  "proxy_password": ""
 }

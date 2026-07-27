@@ -7,6 +7,21 @@ from parser import extract_chinese
 class TMDBClient:
     def __init__(self):
         self._api_key = config.get("tmdb_api_key", "")
+        self._session = self._build_session()
+
+    def _build_session(self):
+        sess = requests.Session()
+        if config.get("proxy_enabled", False):
+            host = config.get("proxy_host", "")
+            port = config.get("proxy_port", "")
+            username = config.get("proxy_username", "")
+            password = config.get("proxy_password", "")
+            if host and port:
+                proxy_url = f"http://{host}:{port}"
+                if username and password:
+                    proxy_url = f"http://{username}:{password}@{host}:{port}"
+                sess.proxies = {"http": proxy_url, "https": proxy_url}
+        return sess
 
     def _rate_limit(self):
         interval = config.get("tmdb_rate_limit", 0.3)
@@ -21,7 +36,7 @@ class TMDBClient:
             params["year"] = year
         for attempt in range(3):
             try:
-                r = requests.get(
+                r = self._session.get(
                     "https://api.themoviedb.org/3/search/movie",
                     params=params, timeout=15)
                 if r.status_code == 200:
@@ -79,7 +94,7 @@ class TMDBClient:
             return None, "", "", ""
         self._rate_limit()
         try:
-            r = requests.get(
+            r = self._session.get(
                 f"https://api.themoviedb.org/3/movie/{tmdb_id}",
                 params={"api_key": self._api_key, "language": "zh-CN"}, timeout=15)
             if r.status_code == 200:

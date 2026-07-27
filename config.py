@@ -47,7 +47,7 @@ DEFAULTS = {
 }
 
 # Password fields that should be masked in API responses
-PASSWORD_FIELDS = {"qb_password", "smb_password"}
+PASSWORD_FIELDS = {"qb_password", "smb_password", "proxy_password"}
 
 # Mapping from .env keys to config keys
 _ENV_MAP = {
