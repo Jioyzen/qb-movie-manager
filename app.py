@@ -63,6 +63,27 @@ def _mask_config(cfg: dict) -> dict:
     return d
 
 
+
+def _format_error(e: Exception, step: str = "") -> str:
+    """将异常转换为用户友好的中文错误信息。"""
+    msg = str(e)
+    em = msg.lower()
+    if "no such file or directory" in em or "cannot find" in em or "not found" in em:
+        return f"文件未找到: {msg[:120]}"
+    if "permission denied" in em:
+        return f"权限不足，无法读取文件: {msg[:120]}"
+    if "mediainfo" in str(e).lower() or "command not found" in em:
+        return "MediaInfo 未安装或未找到，请执行: sudo apt-get install mediainfo"
+    if "connection refused" in em or "connection reset" in em:
+        return f"连接被拒绝，请检查 qBittorrent 是否运行: {msg[:100]}"
+    if "connection timeout" in em or "timed out" in em:
+        return f"连接超时，请检查网络: {msg[:100]}"
+    if "invalid apikey" in em or "invalid api key" in em or "unauthorized" in em:
+        return "TMDB API Key 无效，请在配置页面重新填写"
+    if "mount error" in em:
+        return f"SMB 挂载失败: {msg[:120]}"
+    return f"错误: {msg[:200]}"
+
 def _background_task(step: str, func, *args, **kwargs):
     with _task_state["lock"]:
         _task_state["running"] = True
@@ -83,7 +104,7 @@ def _background_task(step: str, func, *args, **kwargs):
             import traceback
             with _task_state["lock"]:
                 _task_state["running"] = False
-                _task_state["progress"]["message"] = f"错误: {e}"
+                _task_state["progress"]["message"] = _format_error(e, step)
                 print(f"[{step}] Error: {e}\n{traceback.format_exc()}", flush=True)
 
     threading.Thread(target=_run, daemon=True).start()
