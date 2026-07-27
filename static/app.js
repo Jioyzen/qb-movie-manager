@@ -233,10 +233,10 @@ const renderConfig = async (container) => {
     <div id="config-msg" style="display:none;padding:10px 16px;border-radius:8px;margin-bottom:16px;font-size:13px;"></div>
     <div class="card"><div class="card-title">qBittorrent 连接</div>
       <div class="form-row">
-        <div class="form-group" style="max-width:300px"><label>地址</label><input id="c-qb-h"></div>
-        <div class="form-group" style="max-width:100px"><label>端口</label><input id="c-qb-p"></div>
-        <div class="form-group" style="max-width:120px"><label>用户名</label><input id="c-qb-u"></div>
-        <div class="form-group" style="max-width:160px"><label>密码</label><input id="c-qb-pw" type="password"></div>
+        <div class="form-group" style="max-width:300px"><label>地址</label><input id="c-qb-h" value="${d.config.qb_host}"></div>
+        <div class="form-group" style="max-width:100px"><label>端口</label><input id="c-qb-p" value="${d.config.qb_port}"></div>
+        <div class="form-group" style="max-width:120px"><label>用户名</label><input id="c-qb-u" value="${d.config.qb_username}"></div>
+        <div class="form-group" style="max-width:160px"><label>密码</label><input id="c-qb-pw" type="password" value="${d.config.qb_password}"></div>
       </div>
       <div class="btn-row"><button class="btn" onclick="testQBAndFetchCats()">🔄 测试连接并获取分类</button><span id="qb-test-r" style="font-size:13px;color:var(--text-secondary);"></span></div>
       <div id="cat-select" style="margin-top:12px;${state.qbCategories.length === 0 ? 'display:none' : ''}">
@@ -294,14 +294,14 @@ const renderConfig = async (container) => {
     </div>
     <div class="card"><div class="card-title">TMDB 配置</div>
       <div class="form-row">
-        <div class="form-group" style="max-width:300px"><label>API Key</label><input id="c-tk"></div>
-        <div class="form-group" style="max-width:100px"><label>请求间隔(秒)</label><input id="c-tr"></div>
+        <div class="form-group" style="max-width:300px"><label>API Key</label><input id="c-tk" value="${d.config.tmdb_api_key}"></div>
+        <div class="form-group" style="max-width:100px"><label>请求间隔(秒)</label><input id="c-tr" value="${d.config.tmdb_rate_limit}"></div>
       </div>
     </div>
     <div class="card"><div class="card-title">去重策略</div>
       <div class="form-row">
         <div class="form-group" style="max-width:160px"><label>合集策略</label><select id="c-col"><option value="skip" ${d.config.collection_strategy==='skip'?'selected':''}>跳过合集（保护）</option><option value="prefer" ${d.config.collection_strategy==='prefer'?'selected':''}>合集优先</option></select></div>
-        <div class="form-group" style="max-width:100px"><label>小文件阈值(MB)</label><input id="c-ms"></div>
+        <div class="form-group" style="max-width:100px"><label>小文件阈值(MB)</label><input id="c-ms" value="${d.config.min_file_size_mb}"></div>
       </div>
     </div>
     <div class="btn-row" style="justify-content:center;margin-top:24px">
