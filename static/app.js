@@ -257,12 +257,30 @@ const renderConfig = async (container) => {
         </label>
       </div>
       <div id="smb-fields" style="${d.config.use_local_path ? 'display:none' : ''}">
-        <div class="form-row">
-          <div class="form-group"><label>SMB 地址</label><input id="c-sh"></div>
-          <div class="form-group" style="max-width:120px"><label>共享名称</label><input id="c-ss"></div>
-          <div class="form-group" style="max-width:120px"><label>用户名</label><input id="c-su"></div>
-          <div class="form-group" style="max-width:160px"><label>密码</label><input id="c-sp" type="password"></div>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">配置 SMB 远程挂载与 qBittorrent 下载路径的对应关系，至少配置一条</div>
+        <div id="smb-mappings">
+          ${(() => {
+            const smbList = d.config.smb_mappings && d.config.smb_mappings.length > 0
+              ? d.config.smb_mappings
+              : (d.config.smb_host ? [{host: d.config.smb_host, share: d.config.smb_share, username: d.config.smb_username, password: '', mount_point: d.config.smb_mount_point || '', qb_prefix: d.config.qb_download_prefix || '/downloads'}] : []);
+            if (smbList.length === 0) smbList.push({host: '', share: '', username: '', password: '', mount_point: '', qb_prefix: ''});
+            return smbList.map((m, i) => `
+              <div class="smb-mapping-row" id="smb-row-${i}" style="border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px">
+                <div class="form-row" style="margin-bottom:6px">
+                  <div class="form-group"><label>SMB 地址</label><input class="smb-host" value="${m.host || ''}"></div>
+                  <div class="form-group" style="max-width:120px"><label>共享名称</label><input class="smb-share" value="${m.share || ''}"></div>
+                  <div class="form-group" style="max-width:120px"><label>用户名</label><input class="smb-user" value="${m.username || ''}"></div>
+                  <div class="form-group" style="max-width:160px"><label>密码</label><input class="smb-pass" type="password" value="${m.password || ''}"></div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group" style="max-width:300px"><label>挂载点</label><input class="smb-mount" value="${m.mount_point || ''}"></div>
+                  <div class="form-group" style="max-width:160px"><label>QB 前缀</label><input class="smb-qb" value="${m.qb_prefix || ''}"></div>
+                  <button class="btn btn-sm" onclick="removeSmbMapping(${i})" ${smbList.length <= 1 ? 'disabled style="opacity:0.3;cursor:not-allowed"' : ''} style="margin-bottom:8px">✕</button>
+                </div>
+              </div>`).join('');
+          })()}
         </div>
+        <button class="btn btn-sm" onclick="addSmbMapping()" style="margin-top:4px">＋ 添加 SMB 映射</button>
       </div>
       <div id="local-fields" style="${d.config.use_local_path ? '' : 'display:none'}">
         <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">配置本机路径与 qBittorrent 下载路径的对应关系，至少配置一条</div>
@@ -389,6 +407,34 @@ window.removePathMapping = (idx) => {
   if (row) row.remove();
 };
 
+window.addSmbMapping = () => {
+  const el = document.getElementById('smb-mappings');
+  if (!el) return;
+  const idx = el.children.length;
+  const div = document.createElement('div');
+  div.className = 'smb-mapping-row';
+  div.id = `smb-row-${idx}`;
+  div.style.cssText = 'border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px';
+  div.innerHTML = `
+    <div class="form-row" style="margin-bottom:6px">
+      <div class="form-group"><label>SMB 地址</label><input class="smb-host"></div>
+      <div class="form-group" style="max-width:120px"><label>共享名称</label><input class="smb-share"></div>
+      <div class="form-group" style="max-width:120px"><label>用户名</label><input class="smb-user"></div>
+      <div class="form-group" style="max-width:160px"><label>密码</label><input class="smb-pass" type="password"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group" style="max-width:300px"><label>挂载点</label><input class="smb-mount"></div>
+      <div class="form-group" style="max-width:160px"><label>QB 前缀</label><input class="smb-qb"></div>
+      <button class="btn btn-sm" onclick="removeSmbMapping(${idx})" style="margin-bottom:8px">✕</button>
+    </div>`;
+  el.appendChild(div);
+};
+
+window.removeSmbMapping = (idx) => {
+  const row = document.getElementById(`smb-row-${idx}`);
+  if (row) row.remove();
+};
+
 window.verifyAndGo = async () => {
   const btn = document.getElementById('btn-go'); btn.disabled = true;
   showConfigMsg('验证中...', 'success');
@@ -421,16 +467,35 @@ window.verifyAndGo = async () => {
       if (localPath && qbPrefix) pathMappings.push({ local_path: localPath, qb_prefix: qbPrefix });
     });
     cfg.path_mappings = pathMappings;
-    // 兼容旧字段（用于首次运行后向后兼容）
+    // 兼容旧字段
     if (pathMappings.length > 0) {
       cfg.local_path = pathMappings[0].local_path;
       cfg.qb_download_prefix = pathMappings[0].qb_prefix;
     }
   } else {
-    cfg.smb_host = document.getElementById('c-sh').value;
-    cfg.smb_share = document.getElementById('c-ss').value;
-    cfg.smb_username = document.getElementById('c-su').value;
-    cfg.smb_password = document.getElementById('c-sp').value;
+    // 收集 SMB 映射
+    const smbMappings = [];
+    document.querySelectorAll('#smb-mappings .smb-mapping-row').forEach(row => {
+      const host = row.querySelector('.smb-host')?.value?.trim();
+      const share = row.querySelector('.smb-share')?.value?.trim();
+      const username = row.querySelector('.smb-user')?.value?.trim();
+      const password = row.querySelector('.smb-pass')?.value;
+      const mount_point = row.querySelector('.smb-mount')?.value?.trim();
+      const qb_prefix = row.querySelector('.smb-qb')?.value?.trim();
+      if (host && share && mount_point && qb_prefix) {
+        smbMappings.push({ host, share, username, password, mount_point, qb_prefix });
+      }
+    });
+    cfg.smb_mappings = smbMappings;
+    // 兼容旧字段
+    if (smbMappings.length > 0) {
+      cfg.smb_host = smbMappings[0].host;
+      cfg.smb_share = smbMappings[0].share;
+      cfg.smb_username = smbMappings[0].username;
+      cfg.smb_password = smbMappings[0].password;
+      cfg.smb_mount_point = smbMappings[0].mount_point;
+      cfg.qb_download_prefix = smbMappings[0].qb_prefix;
+    }
   }
   await api('/api/config', { method: 'PUT', body: JSON.stringify(cfg) });
 

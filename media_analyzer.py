@@ -65,22 +65,37 @@ def _write_cache(file_path: str, file_size: int, mtime: float, data: dict):
 # ─── SMB mount management ───────────────────────────────────────
 
 def _ensure_mount(mount_point: str) -> bool:
-    """Ensure SMB share is mounted."""
-    if os.path.ismount(mount_point):
-        return True
+    """Ensure SMB share is mounted (single, backward compat)."""
     host = config.get("smb_host")
     share = config.get("smb_share")
     username = config.get("smb_username")
     password = config.get("smb_password")
+    return _do_mount(host, share, username, password, mount_point)
+
+
+def _ensure_mount_with_cfg(mapping: dict) -> bool:
+    """Ensure SMB share is mounted from a mapping dict."""
+    return _do_mount(
+        mapping.get("host", ""),
+        mapping.get("share", ""),
+        mapping.get("username", ""),
+        mapping.get("password", ""),
+        mapping.get("mount_point", ""),
+    )
+
+
+def _do_mount(host: str, share: str, username: str, password: str, mount_point: str) -> bool:
+    """Mount a CIFS share."""
+    if os.path.ismount(mount_point):
+        return True
+    if not host or not share or not mount_point:
+        return False
     os.makedirs(mount_point, exist_ok=True)
     try:
-        # 直接 mount（容器内 root 或宿主机均可）
-        # 如果失败，回退到 sudo mount（某些环境需要）
         opts = f"username={username},password={password},iocharset=utf8,file_mode=0755,dir_mode=0755,noexec,nosuid,nodev"
         cmd = ["mount", "-t", "cifs", f"//{host}/{share}", mount_point, "-o", opts]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
-            # 回退到 sudo mount
             cmd = ["sudo", "mount", "-t", "cifs", f"//{host}/{share}", mount_point, "-o", opts]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
@@ -503,9 +518,21 @@ def analyze_torrents(
             print("[media_analyzer] Local path not found, falling back to filename-only", flush=True)
             return _analyze_filename_only(torrents, progress_callback, control_callback)
     else:
-        mount_point = config.get("smb_mount_point")
-        # Mount SMB
-        if not _ensure_mount(mount_point):
+        # 挂载所有 SMB 映射
+        smb_mappings = config.get("smb_mappings", []) or []
+        all_mounted = True
+        if not smb_mappings:
+            # 兼容旧配置：单条 SMB
+            mount_point = config.get("smb_mount_point")
+            if mount_point and not _ensure_mount(mount_point):
+                all_mounted = False
+        else:
+            for m in smb_mappings:
+                mp = m.get("mount_point", "")
+                if mp and not _ensure_mount_with_cfg(m):
+                    all_mounted = False
+                    break
+        if not all_mounted:
             print("[media_analyzer] SMB mount failed, falling back to filename-only", flush=True)
             return _analyze_filename_only(torrents, progress_callback, control_callback)
 
@@ -606,15 +633,26 @@ def _analyze_single_video_file(torrent: dict, vf: dict, mount_point: str, save_p
                 relative = save_path.lstrip("/")
             full_path = os.path.join(mp, relative, file_rel_path)
     else:
-        # Build SMB path: mount_point + save_path_without_prefix + file_rel_path
-        prefix = config.get("qb_download_prefix")
-        if save_path.startswith(prefix):
-            relative = save_path[len(prefix):].lstrip("/")
-        else:
-            relative = save_path.lstrip("/")
-
-        # If file_rel_path already starts with torrent name, don't add it again
-        full_path = os.path.join(mount_point, relative, file_rel_path)
+        # SMB 路径：遍历 smb_mappings，按 QB 前缀匹配
+        mounted = False
+        smb_mappings = config.get("smb_mappings", []) or []
+        for m in smb_mappings:
+            pfx = m.get("qb_prefix", "")
+            mp = m.get("mount_point", "")
+            if pfx and mp and save_path.startswith(pfx):
+                relative = save_path[len(pfx):].lstrip("/")
+                full_path = os.path.join(mp, relative, file_rel_path)
+                mounted = True
+                break
+        if not mounted:
+            # 回退到单条 SMB 模式
+            mount_point = config.get("smb_mount_point")
+            prefix = config.get("qb_download_prefix")
+            if save_path.startswith(prefix):
+                relative = save_path[len(prefix):].lstrip("/")
+            else:
+                relative = save_path.lstrip("/")
+            full_path = os.path.join(mount_point, relative, file_rel_path)
 
     file_name = os.path.basename(file_rel_path)
     file_name_noext = os.path.splitext(file_name)[0]
@@ -785,12 +823,18 @@ def _analyze_filename_only(
 def unmount_smb():
     if config.get("use_local_path", False):
         return
-    mount_point = config.get("smb_mount_point")
-    if os.path.ismount(mount_point):
-        try:
-            subprocess.run(["umount", mount_point], capture_output=True, timeout=10)
-        except Exception:
+    # 卸载所有 SMB 映射的挂载点
+    smb_mappings = config.get("smb_mappings", []) or []
+    mount_points = [m.get("mount_point", "") for m in smb_mappings if m.get("mount_point")]
+    legacy_mp = config.get("smb_mount_point")
+    if legacy_mp and legacy_mp not in mount_points:
+        mount_points.append(legacy_mp)
+    for mp in mount_points:
+        if os.path.ismount(mp):
             try:
-                subprocess.run(["sudo", "umount", mount_point], capture_output=True, timeout=10)
+                subprocess.run(["umount", mp], capture_output=True, timeout=10)
             except Exception:
-                pass
+                try:
+                    subprocess.run(["sudo", "umount", mp], capture_output=True, timeout=10)
+                except Exception:
+                    pass

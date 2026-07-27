@@ -39,6 +39,7 @@ DEFAULTS = {
     "local_path": "",
     "qb_download_prefix": "/downloads",
     "path_mappings": [],
+    "smb_mappings": [],
     # Collection strategy: "skip" (protect collections) | "prefer" (prefer collection)
     "collection_strategy": "skip",
     # Priority chain: ordered list of layers
