@@ -247,15 +247,15 @@ const renderConfig = async (container) => {
     <div class="card"><div class="card-title">文件路径配置</div>
       <div style="display:flex;gap:12px;margin-bottom:12px">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-          <input type="radio" name="path-mode" value="local" ${d.config.use_local_path ? 'checked' : ''} onchange="togglePathMode('local')">
+          <input type="radio" name="path-mode" value="local" ${d.config.use_local_path !== false ? 'checked' : ''} onchange="togglePathMode('local')">
           <span style="font-size:13px">本地路径</span>
         </label>
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-          <input type="radio" name="path-mode" value="smb" ${d.config.use_local_path ? '' : 'checked'} onchange="togglePathMode('smb')">
+          <input type="radio" name="path-mode" value="smb" ${d.config.use_local_path !== false ? '' : 'checked'} onchange="togglePathMode('smb')">
           <span style="font-size:13px">SMB 远程挂载</span>
         </label>
       </div>
-      <div id="smb-fields" style="${d.config.use_local_path ? 'display:none' : ''}">
+      <div id="smb-fields" style="${d.config.use_local_path !== false ? 'display:none' : ''}">
         <div id="smb-mappings">
           ${(() => {
             const smbList = d.config.smb_mappings && d.config.smb_mappings.length > 0
@@ -275,7 +275,7 @@ const renderConfig = async (container) => {
         </div>
         <button class="btn btn-sm" onclick="addSmbMapping()" style="margin-top:4px">＋ 添加 SMB 映射</button>
       </div>
-      <div id="local-fields" style="${d.config.use_local_path ? '' : 'display:none'}">
+      <div id="local-fields" style="${d.config.use_local_path !== false ? '' : 'display:none'}">
         <div id="path-mappings">
           ${(() => {
             const mappings = d.config.path_mappings && d.config.path_mappings.length > 0
