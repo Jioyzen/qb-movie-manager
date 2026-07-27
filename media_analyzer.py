@@ -519,11 +519,11 @@ def analyze_torrents(
             return _analyze_filename_only(torrents, progress_callback, control_callback)
     else:
         # 挂载所有 SMB 映射
+        mount_point = config.get("smb_mount_point", "")
         smb_mappings = config.get("smb_mappings", []) or []
         all_mounted = True
         if not smb_mappings:
             # 兼容旧配置：单条 SMB
-            mount_point = config.get("smb_mount_point")
             if mount_point and not _ensure_mount(mount_point):
                 all_mounted = False
         else:
