@@ -510,6 +510,7 @@ def analyze_torrents(
     min_size_bytes = min_size_mb * 1024 * 1024
 
     use_local = config.get("use_local_path", False)
+    mount_point = ""
     if use_local:
         mappings = config.get("path_mappings", []) or []
         # 检查至少有一个本地路径可用
