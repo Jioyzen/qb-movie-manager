@@ -833,7 +833,9 @@ def cleanup(exception=None):
 
 
 if __name__ == "__main__":
+    import os
+    debug = os.environ.get("FLASK_DEBUG", "0") == "1"
     try:
-        app.run(host="0.0.0.0", port=8090, debug=True)
+        app.run(host="0.0.0.0", port=5000, debug=debug)
     finally:
         unmount_smb()
