@@ -6,7 +6,7 @@ services:
     container_name: qb-movie-manager
     restart: unless-stopped
     ports:
-      - "8090:8090"
+      - "8899:8899"
     volumes:
       # 配置持久化：宿主机目录映射到容器 /config
       - ./config:/config

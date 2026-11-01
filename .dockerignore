@@ -35,3 +35,5 @@ README.md
 
 # Docker
 .dockerignore
+data/web_auth.txt
+data/tmdb_cache/

@@ -514,10 +514,10 @@ def analyze_torrents(
     if use_local:
         mappings = config.get("path_mappings", []) or []
         # 检查至少有一个本地路径可用
-        paths_ok = any(m.get("local_path") and os.path.isdir(m["local_path"]) for m in mappings)
+        paths_ok = (any(m.get("local_path") and os.path.isdir(m["local_path"]) for m in mappings)
+                    or bool(config.get("local_path") and os.path.isdir(config.get("local_path"))))
         if not paths_ok:
-            print("[media_analyzer] Local path not found, falling back to filename-only", flush=True)
-            return _analyze_filename_only(torrents, progress_callback, control_callback)
+            raise RuntimeError("本地媒体路径不可用，请检查路径映射")
     else:
         # 挂载所有 SMB 映射
         mount_point = config.get("smb_mount_point", "")
@@ -534,8 +534,7 @@ def analyze_torrents(
                     all_mounted = False
                     break
         if not all_mounted:
-            print("[media_analyzer] SMB mount failed, falling back to filename-only", flush=True)
-            return _analyze_filename_only(torrents, progress_callback, control_callback)
+            raise RuntimeError("SMB 挂载失败，请检查连接及路径配置")
 
     all_profiles = []
     total = len(torrents)
@@ -555,11 +554,7 @@ def analyze_torrents(
         # Get file list from qBittorrent API
         files = _get_torrent_files(hash_val)
         if not files:
-            # Fallback: filename-only analysis
-            mp = _analyze_by_filename(torrent)
-            if mp:
-                all_profiles.append(mp)
-            continue
+            raise RuntimeError(f"无法获取种子文件列表：{seed_name}")
 
         # Filter video files
         video_files = []
@@ -573,11 +568,7 @@ def analyze_torrents(
             video_files.append(f)
 
         if not video_files:
-            # No video files found, fallback
-            mp = _analyze_by_filename(torrent)
-            if mp:
-                all_profiles.append(mp)
-            continue
+            raise RuntimeError(f"未找到符合条件的视频文件：{seed_name}")
 
         if is_collection:
             # Collection: analyze each video file as a separate movie
@@ -716,19 +707,14 @@ def _analyze_single_video_file(torrent: dict, vf: dict, mount_point: str, save_p
     # Run MediaInfo
     mi_data = _run_mediainfo(full_path)
     if not mi_data:
-        # MediaInfo failed, use filename fallback
-        mp.hdr_level = _guess_hdr_from_filename(file_name_noext)
-        mp.hdr_detail = {
-            "dv_p7": "Dolby Vision P7", "dv_p8": "Dolby Vision P8",
-            "dv_p5": "Dolby Vision P5", "hdr10plus": "HDR10+",
-            "hdr10": "HDR10", "sdr": "SDR",
-        }.get(mp.hdr_level, "SDR")
-        return mp
+        raise RuntimeError(f"MediaInfo 无法分析文件：{full_path}")
 
     # Parse MediaInfo JSON
     try:
         tracks = mi_data.get("media", {}).get("track", [])
         video_tracks = [t for t in tracks if t.get("@type") == "Video"]
+        if not video_tracks:
+            raise ValueError("未找到视频轨道")
         audio_tracks = [t for t in tracks if t.get("@type") == "Audio"]
         text_tracks = [t for t in tracks if t.get("@type") == "Text"]
 
@@ -761,7 +747,7 @@ def _analyze_single_video_file(torrent: dict, vf: dict, mount_point: str, save_p
         except OSError:
             pass
     except Exception as e:
-        print(f"[media_analyzer] Parse error: {e}", flush=True)
+        raise RuntimeError(f"MediaInfo 结果解析失败：{full_path}: {e}") from e
 
     return mp
 

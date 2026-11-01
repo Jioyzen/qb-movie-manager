@@ -24,6 +24,8 @@ class QBClient:
             timeout=10,
         )
         r.raise_for_status()
+        if r.text.strip() != "Ok.":
+            raise RuntimeError("qBittorrent 登录失败，请检查用户名和密码")
         self._logged_in = True
 
     def _get(self, path, params=None):

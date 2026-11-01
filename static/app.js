@@ -1,6 +1,6 @@
 /* ─── QB 影视管理工具 v2.1 - SPA ─────────────────────────────── */
 const state = { step: 0, torrents: [], matches: [], profiles: [], dedup: [], overview: null,
-  config: null, busy: false, busyStep: '', pollTimer: null, keepOverrides: {}, qbCategories: [], collectionFilter: false, tmdbFilter: false };
+  config: null, completed: {}, busy: false, paused: false, busyStep: '', pollTimer: null, keepOverrides: {}, qbCategories: [], collectionFilter: false, tmdbFilter: false };
 
 const api = async (url, opts = {}) => {
   try { const r = await fetch(url, { headers: { 'Content-Type': 'application/json', ...opts.headers }, ...opts }); return await r.json(); }
@@ -20,6 +20,33 @@ const setStatus = (t, b = false) => {
   document.getElementById('statusDot').className = 'status-dot' + (b ? ' busy' : '');
 };
 
+const taskButtonLabel = (step) => {
+  const name = step === 'tmdb' ? '匹配' : '分析';
+  if (state.completed[step]) return `✅ ${name}完成`;
+  if (state.busy && state.busyStep === step) return state.paused ? `▶️ 继续${name}` : `⏸️ 暂停${name}`;
+  return `${step === 'tmdb' ? '🏷️' : '🔍'} 开始${name}`;
+};
+
+const updateTaskButton = () => {
+  for (const step of ['tmdb', 'analyze']) {
+    const button = document.getElementById(`btn-${step}`);
+    if (button) button.textContent = taskButtonLabel(step);
+  }
+};
+
+window.controlTask = async (step) => {
+  if (state.completed[step]) return;
+  if (!state.busy) return step === 'tmdb' ? window.startTmdb() : window.startAnalyze();
+  if (state.busyStep !== step) return;
+  const button = document.getElementById(`btn-${step}`);
+  if (button) button.disabled = true;
+  const result = await api(`/api/${step}/pause`, { method: 'POST' });
+  if (result?.status === 'ok') state.paused = result.paused;
+  else showToast(result?.error || '操作失败', 'error');
+  if (button) button.disabled = false;
+  updateTaskButton();
+};
+
 // ─── 轮询 ───────────────────────────────────────────────────
 const STEP_MAP = { 'fetch': 1, 'tmdb': 2, 'analyze': 3, 'dedup': 4 };
 
@@ -29,7 +56,8 @@ const startPolling = () => {
     const d = await api('/api/progress');
     if (!d) return;
     if (d.running) {
-      state.busy = true; state.busyStep = d.current_step; setStatus(d.progress.message, true);
+      state.busy = true; state.busyStep = d.current_step; state.paused = !!d.paused; setStatus(state.paused ? '已暂停' : d.progress.message, true);
+      updateTaskButton();
       // 只在与当前步骤匹配时才显示进度条，避免跨步骤进度泄漏
       const taskStep = STEP_MAP[d.current_step] ?? -1;
       if (state.step === taskStep) {
@@ -83,9 +111,13 @@ const startPolling = () => {
         }
       }
     } else if (state.busy || d.progress.total > 0) {
-      state.busy = false; state.busyStep = ''; clearInterval(state.pollTimer); state.pollTimer = null;
-      setStatus('就绪');
+      state.busy = false; state.paused = false; state.busyStep = ''; clearInterval(state.pollTimer); state.pollTimer = null;
+      const error = d.error || '';
+      setStatus(error || '就绪');
+      if (error) showToast(error, 'error');
       document.querySelectorAll('.progress-bar').forEach(e => e.style.display = 'none');
+      const status = await api('/api/status');
+      if (status) state.completed = status.completed;
       await refreshCurrentStep();
     }
   }, 1000);
@@ -104,7 +136,11 @@ const refreshCurrentStep = async () => {
 };
 
 window.switchStep = async (idx) => {
+  if (idx >= 3 && (state.busy || !state.completed.tmdb)) { showToast('请先完成 TMDB 匹配', 'error'); return; }
+  if (idx >= 4 && !state.completed.analyze) { showToast('请先完成深度分析', 'error'); return; }
+  if (idx >= 5 && !state.completed.dedup) { showToast('请先完成去重筛选', 'error'); return; }
   state.step = idx;
+  sessionStorage.setItem('qb_step', String(idx));
   document.querySelectorAll('.step').forEach((e, i) => e.className = 'step' + (i === idx ? ' active' : ''));
   if (idx === 1) { const d = await api('/api/torrents'); if (d) state.torrents = d.torrents; }
   else if (idx === 2) { const d = await api('/api/tmdb/results'); if (d) state.matches = d.matches; const t = await api('/api/torrents'); if (t) state.torrents = t.torrents; }
@@ -543,8 +579,8 @@ const renderFetch = (container) => {
   container.innerHTML = `
     <h2>📥 获取种子 <span class="desc">从 qBittorrent 拉取种子列表</span></h2>
     <div class="card">
-      <div class="btn-row"><button class="btn btn-primary" onclick="fetchTorrents()" id="btn-fetch">🚀 开始获取</button>
-        <button class="btn" onclick="switchStep(2)" id="btn-next-1" ${hasData ? '' : 'disabled'}>➡️ 进入TMDB匹配</button>
+      <div class="btn-row"><button class="btn btn-primary" onclick="fetchTorrents()" id="btn-fetch" ${state.busy ? 'disabled' : ''}>🚀 ${hasData ? '重新获取' : '开始获取'}</button>
+        <button class="btn" onclick="switchStep(2)" id="btn-next-1" ${hasData && !state.busy ? '' : 'disabled'}>➡️ 进入TMDB匹配</button>
         <span class="task-status" style="font-size:13px;color:#8b949e;"></span></div>
       <div class="progress-bar" style="display:none"><div class="fill" style="width:0%"></div></div>
     </div>
@@ -577,6 +613,7 @@ window.fetchTorrents = async () => {
   startPolling();
   const d = await api('/api/torrents/fetch', { method: 'POST' });
   if (!d || d.status !== 'ok') { document.getElementById('btn-fetch').disabled = false; showToast(d?.error || '获取失败', 'error'); }
+  else { state.busy = true; state.busyStep = 'fetch'; state.completed = {}; state.matches = []; state.profiles = []; state.dedup = []; state.keepOverrides = {}; sessionStorage.removeItem('qb_keep_overrides'); renderFetch(document.getElementById('content')); }
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -604,12 +641,9 @@ const renderTmdb = (container) => {
     <h2>🏷️ TMDB 匹配 <span class="desc">从种子名称提取电影名和年份，匹配 TMDB 获取电影 ID</span></h2>
     <div class="card">
       <div class="btn-row">
-        ${state.busy && state.busyStep === 'tmdb'
-          ? `<button class="btn btn-danger" onclick="stopTmdb()" id="btn-tmdb-stop">⏹️ 停止匹配</button>
-             <button class="btn" onclick="togglePause()" id="btn-pause">⏸️ 暂停</button>`
-          : `<button class="btn btn-primary" onclick="startTmdb()" id="btn-tmdb" ${state.torrents.length === 0 ? 'disabled' : ''}>🏷️ 开始匹配</button>
-             <button class="btn" onclick="togglePause()" id="btn-pause" style="display:none">⏸️ 暂停</button>`}
-        <button class="btn" onclick="switchStep(3)" id="btn-next-2" ${hasData ? '' : 'disabled'}>➡️ 进入深度分析</button>
+        <button class="btn btn-primary" onclick="controlTask('tmdb')" id="btn-tmdb" ${state.completed.tmdb || (!state.busy && state.torrents.length === 0) || (state.busy && state.busyStep !== 'tmdb') ? 'disabled' : ''}>${taskButtonLabel('tmdb')}</button>
+        <button class="btn" onclick="switchStep(3)" id="btn-next-2" ${state.completed.tmdb && !state.busy ? '' : 'disabled'}>➡️ 进入深度分析</button>
+        <button class="btn" onclick="clearCache('tmdb')" ${state.busy ? 'disabled' : ''}>清空匹配缓存</button>
         <span class="task-status" style="font-size:13px;color:#8b949e;"></span></div>
       <div class="progress-bar" style="display:none"><div class="fill" style="width:0%"></div></div>
     </div>
@@ -642,14 +676,6 @@ const renderTmdb = (container) => {
       }).join('')}</tbody></table>
     </div>` : ''}`
   ;
-};
-
-window.togglePause = async () => {
-  const d = await api('/api/tmdb/pause', { method: 'POST' });
-  const btn = document.getElementById('btn-pause');
-  if (d && btn) {
-    btn.textContent = d.paused ? '▶️ 继续' : '⏸️ 暂停';
-  }
 };
 
 window.toggleTmdbFilter = () => {
@@ -697,6 +723,7 @@ window.cancelEditTmdbId = (hash, currentId) => {
 };
 
 window.startTmdb = async () => {
+  document.getElementById('btn-tmdb').disabled = true;
   document.querySelector('.task-status').textContent = '匹配中...';
   document.querySelector('.progress-bar').style.display = 'block';
   startPolling();
@@ -704,18 +731,12 @@ window.startTmdb = async () => {
   if (!d || d.status !== 'ok') {
     document.querySelector('.task-status').textContent = '';
     document.querySelector('.progress-bar').style.display = 'none';
+    document.getElementById('btn-tmdb').disabled = false;
     showToast(d?.error || '匹配失败', 'error');
   } else {
-    state.busy = true; state.busyStep = 'tmdb';
+    state.busy = true; state.busyStep = 'tmdb'; state.completed.tmdb = false; state.completed.analyze = false; state.completed.dedup = false; state.keepOverrides = {}; sessionStorage.removeItem('qb_keep_overrides');
     renderTmdb(document.getElementById('content'));
   }
-};
-
-window.stopTmdb = async () => {
-  const btn = document.getElementById('btn-tmdb-stop');
-  if (btn) btn.disabled = true;
-  showToast('正在停止匹配...', 'info');
-  await api('/api/tmdb/stop', { method: 'POST' });
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -744,11 +765,9 @@ const renderAnalyze = (container) => {
     <h2>🔍 深度分析 <span class="desc">通过读取原始视频文件，深度分析，提取音轨、字幕、HDR 等信息</span></h2>
     <div class="card">
       <div class="btn-row">
-        ${state.busy && state.busyStep === 'analyze'
-          ? `<button class="btn btn-danger" onclick="stopAnalyze()" id="btn-analyze-stop">⏹️ 停止分析</button>
-             <button class="btn" onclick="toggleAnalyzePause()" id="btn-analyze-pause">⏸️ 暂停</button>`
-          : `<button class="btn btn-primary" onclick="startAnalyze()" id="btn-analyze" ${state.torrents.length === 0 ? 'disabled' : ''}>🔍 开始分析</button>
-             <button class="btn" onclick="switchStep(4)" id="btn-next-3" ${count > 0 ? '' : 'disabled'}>➡️ 进入去重筛选</button>`}
+        <button class="btn btn-primary" onclick="controlTask('analyze')" id="btn-analyze" ${state.completed.analyze || (!state.busy && !state.completed.tmdb) || (state.busy && state.busyStep !== 'analyze') ? 'disabled' : ''}>${taskButtonLabel('analyze')}</button>
+        <button class="btn" onclick="switchStep(4)" id="btn-next-3" ${state.completed.analyze && !state.busy ? '' : 'disabled'}>➡️ 进入去重筛选</button>
+        <button class="btn" onclick="clearCache('analyze')" ${state.busy ? 'disabled' : ''}>清空分析缓存</button>
         <span class="task-status" style="font-size:13px;color:#8b949e;"></span></div>
       <div class="progress-bar" style="display:none"><div class="fill" style="width:0%"></div></div>
       <div class="progress-text" style="display:none"></div>
@@ -801,6 +820,7 @@ const renderAnalyze = (container) => {
 };
 
 window.startAnalyze = async () => {
+  document.getElementById('btn-analyze').disabled = true;
   document.querySelector('.task-status').textContent = '分析中...';
   document.querySelector('.progress-bar').style.display = 'block';
   document.querySelector('.progress-text').style.display = 'block';
@@ -810,25 +830,11 @@ window.startAnalyze = async () => {
     document.querySelector('.task-status').textContent = '';
     document.querySelector('.progress-bar').style.display = 'none';
     document.querySelector('.progress-text').style.display = 'none';
+    document.getElementById('btn-analyze').disabled = false;
     showToast(d?.error || '分析失败', 'error');
   } else {
-    state.busy = true; state.busyStep = 'analyze';
+    state.busy = true; state.busyStep = 'analyze'; state.completed.analyze = false; state.completed.dedup = false; state.keepOverrides = {}; sessionStorage.removeItem('qb_keep_overrides');
     renderAnalyze(document.getElementById('content'));
-  }
-};
-
-window.stopAnalyze = async () => {
-  const btn = document.getElementById('btn-analyze-stop');
-  if (btn) btn.disabled = true;
-  showToast('正在停止分析...', 'info');
-  await api('/api/analyze/stop', { method: 'POST' });
-};
-
-window.toggleAnalyzePause = async () => {
-  const d = await api('/api/analyze/pause', { method: 'POST' });
-  const btn = document.getElementById('btn-analyze-pause');
-  if (d && btn) {
-    btn.textContent = d.paused ? '▶️ 继续' : '⏸️ 暂停';
   }
 };
 
@@ -995,10 +1001,11 @@ const renderDupGroup = (g) => {
   </div>${all.map(p => renderItem(p, p.torrent_hash === keep?.torrent_hash && p.file_index === keep?.file_index)).join('')}</div>`;
 };
 
-window.toggleKeep = (key, val) => { state.keepOverrides[key] = val; renderDedupResults(); };
+window.toggleKeep = (key, val) => { state.keepOverrides[key] = val; sessionStorage.setItem('qb_keep_overrides', JSON.stringify(state.keepOverrides)); renderDedupResults(); };
 
 window.runDedup = async () => {
   state.keepOverrides = {};
+  sessionStorage.removeItem('qb_keep_overrides');
   document.getElementById('btn-dedup').disabled = true;
   document.querySelector('.task-status').textContent = '计算中...';
   state.busy = true;
@@ -1025,7 +1032,7 @@ window.runDedup = async () => {
 // ═══════════════════════════════════════════════════════════════
 // Step 5: 清理删除
 // ═══════════════════════════════════════════════════════════════
-const renderCleanup = (container) => {
+const getDeleteList = () => {
   const deleteList = [];
   for (const g of state.dedup) {
     const keep = g.keep;
@@ -1046,6 +1053,11 @@ const renderCleanup = (container) => {
       }
     }
   }
+  return deleteList;
+};
+
+const renderCleanup = (container) => {
+  const deleteList = getDeleteList();
   const totalSize = deleteList.reduce((s, p) => s + (p.file_size || 0), 0);
   container.innerHTML = `
     <h2>🗑️ 清理删除</h2>
@@ -1053,7 +1065,7 @@ const renderCleanup = (container) => {
     <div class="card"><div class="card-title">待删除概览</div>
       <div class="stats-row">
         <div class="stat-card"><div class="num" style="color:#f85149">${deleteList.length}</div><div class="label">待删除种子</div></div>
-        <div class="stat-card"><div class="num">${fmtSize(totalSize)}</div><div class="label">可释放空间</div></div>
+        <div class="stat-card"><div class="num">${deleteList.length === 0 ? '0' : fmtSize(totalSize)}</div><div class="label">可释放空间</div></div>
       </div>
       <div class="btn-row">
         <button class="btn btn-danger" onclick="confirmDelete()" id="btn-cleanup" ${deleteList.length === 0 ? 'disabled' : ''}>🗑️ 删除 ${deleteList.length} 个种子</button>
@@ -1073,17 +1085,7 @@ const renderCleanup = (container) => {
 };
 
 window.confirmDelete = async () => {
-  const hashes = new Set();
-  for (const g of state.dedup) {
-    const keep = g.keep;
-    for (const p of (g.delete || [])) {
-      const key = `${p.torrent_hash}|${p.file_index}`;
-      const override = state.keepOverrides[key];
-      if (override === true) continue;
-      if (override === false || (override === undefined && p.torrent_hash !== keep?.torrent_hash)) hashes.add(p.torrent_hash);
-    }
-  }
-  const arr = Array.from(hashes);
+  const arr = getDeleteList().map(p => p.torrent_hash);
   if (arr.length === 0) { showToast('没有待删除的种子', 'info'); return; }
   if (!confirm(`确认删除 ${arr.length} 个种子？此操作不可撤销！`)) return;
   document.getElementById('btn-cleanup').disabled = true;
@@ -1091,38 +1093,52 @@ window.confirmDelete = async () => {
   document.querySelector('.progress-bar').style.display = 'block';
   const d = await api('/api/torrents/delete', { method: 'POST', body: JSON.stringify({ hashes: arr, delete_files: true }) });
   if (d && d.status === 'ok') {
-    showToast(`成功删除 ${d.deleted} 个种子`, 'success');
-    document.getElementById('cleanup-status').textContent = `✅ 已删除 ${d.deleted} 个`;
-    state.torrents = state.torrents.filter(t => !arr.includes(t.hash));
-    state.profiles = state.profiles.filter(p => !arr.includes(p.torrent_hash));
-    state.dedup = [];
-    renderCleanup();
-  } else { document.getElementById('btn-cleanup').disabled = false; showToast(d?.error || '删除失败', 'error'); }
+    const deleted = d.deleted_hashes || [];
+    state.torrents = state.torrents.filter(t => !deleted.includes(t.hash));
+    state.profiles = state.profiles.filter(p => !deleted.includes(p.torrent_hash));
+    state.dedup = []; state.completed.dedup = false; state.keepOverrides = {};
+    sessionStorage.removeItem('qb_keep_overrides');
+    renderCleanup(document.getElementById('content'));
+    const detail = `已确认删除 ${d.deleted} 个；原本不存在 ${d.missing || 0} 个；仍存在 ${d.remaining || 0} 个。请重新去重。`;
+    document.getElementById('cleanup-status').textContent = detail;
+    showToast(detail, d.remaining ? 'error' : 'success');
+  } else {
+    if (d?.requires_refresh) { state.completed = {}; state.dedup = []; }
+    document.getElementById('btn-cleanup').disabled = !!d?.requires_refresh;
+    document.getElementById('cleanup-status').textContent = d?.error || '删除失败';
+    showToast(d?.error || '删除失败', 'error');
+  }
 };
 
 // ═══════════════════════════════════════════════════════════════
 // 初始化 - 从后端恢复持久化状态
 // ═══════════════════════════════════════════════════════════════
-document.addEventListener('DOMContentLoaded', async () => {
-  // 清除后端所有旧的任务数据
-  await api('/api/reset', { method: 'POST' });
-  // 加载配置
-  const cfg = await api('/api/config');
-  if (cfg) state.config = cfg.config;
-  state.torrents = [];
-  state.matches = [];
-  state.profiles = [];
-  state.dedup = [];
-  sessionStorage.removeItem('qb_step');
-  switchStep(0);
-  // 切换步骤时保存步骤到 sessionStorage
-  const origSwitch = window.switchStep;
-  window.switchStep = async (idx) => {
-    sessionStorage.setItem('qb_step', String(idx));
-    return origSwitch(idx);
-  };
+window.clearCache = async (kind) => {
+  if (!confirm(`确认清空${kind === 'tmdb' ? 'TMDB 匹配' : '深度分析'}缓存？现有任务结果不会清除。`)) return;
+  const result = await api(`/api/cache/${kind}`, { method: 'DELETE' });
+  showToast(result?.status === 'ok' ? `已清空 ${result.cleared} 条缓存` : (result?.error || '清空缓存失败'), result?.status === 'ok' ? 'success' : 'error');
+};
 
-  // 恢复主题偏好
+document.addEventListener('DOMContentLoaded', async () => {
+  const [cfg, status, torrents, matches, profiles, dedup] = await Promise.all([
+    api('/api/config'), api('/api/status'), api('/api/torrents'), api('/api/tmdb/results'),
+    api('/api/analyze/profiles'), api('/api/dedup/results'),
+  ]);
+  if (cfg) state.config = cfg.config;
+  if (torrents) state.torrents = torrents.torrents;
+  if (matches) state.matches = matches.matches;
+  if (profiles) state.profiles = profiles.profiles;
+  if (dedup) { state.dedup = dedup.groups; state.overview = dedup.summary; }
+  if (status?.error && !status.running) { setStatus(status.error); showToast(status.error, 'error'); }
+  if (status) { state.busy = status.running; state.paused = !!status.paused; state.busyStep = status.current_step; state.completed = status.completed || {}; }
+  try { state.keepOverrides = JSON.parse(sessionStorage.getItem('qb_keep_overrides') || '{}'); } catch (_) { state.keepOverrides = {}; }
+  const saved = Number(sessionStorage.getItem('qb_step') || 0);
+  const step = saved >= 5 && !state.completed.dedup ? 4 : saved >= 4 && !state.completed.analyze ? 3 : saved >= 3 && !state.completed.tmdb ? 2 : saved;
+  // A running task may be resumed on its own page after refresh.
+  state.step = Math.max(0, Math.min(5, Number.isFinite(step) ? step : 0));
+  document.querySelectorAll('.step').forEach((e, i) => e.className = 'step' + (i === state.step ? ' active' : ''));
+  await renderContent();
+  if (state.busy) startPolling();
   applyTheme(localStorage.getItem('qb_theme') || 'light');
 });
 

@@ -1,5 +1,7 @@
 """Flask web application - QB 影视管理工具 v2.0"""
 import json
+import hashlib
+from urllib.parse import urlsplit
 import os
 import sys
 import threading
@@ -13,7 +15,7 @@ from qb_client import QBClient
 from parser import parse_filename
 from tmdb_client import TMDBClient
 from scoring_engine import MediaProfile, rank_profiles
-from media_analyzer import analyze_torrents, unmount_smb
+from media_analyzer import analyze_torrents, unmount_smb, CACHE_DIR
 from dedup_engine import DedupEngine
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -21,10 +23,23 @@ app = Flask(__name__,
             template_folder=os.path.join(BASE_DIR, "templates"),
             static_folder=os.path.join(BASE_DIR, "static"))
 
+@app.before_request
+def protect_web_access():
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        origin = request.headers.get("Origin")
+        if origin and urlsplit(origin).netloc.lower() != request.host.lower():
+            return jsonify({"status": "error", "error": "请求来源不匹配"}), 403
+        if request.headers.get("Sec-Fetch-Site") == "cross-site":
+            return jsonify({"status": "error", "error": "不允许跨站请求"}), 403
+        if not request.is_json:
+            return jsonify({"status": "error", "error": "请求必须使用 JSON"}), 415
+
+
 # ─── 全局状态 ───────────────────────────────────────────────
 
 _task_state = {
     "running": False,
+    "error": "",
     "paused": False,
     "current_step": "",
     "progress": {"current": 0, "total": 0, "message": ""},
@@ -33,6 +48,7 @@ _task_state = {
     "profiles": [],
     "dedup_results": [],
     "collection_flags": {},
+    "completed": {"fetch": False, "tmdb": False, "analyze": False, "dedup": False},
     "lock": threading.Lock(),
 }
 
@@ -42,6 +58,7 @@ _task_state = {
 def _clear_task_data():
     with _task_state["lock"]:
         _task_state["current_step"] = ""
+        _task_state["error"] = ""
         _task_state["progress"] = {"current": 0, "total": 0, "message": ""}
         _task_state["torrents"] = []
         _task_state["tmdb_matches"] = []
@@ -50,6 +67,7 @@ def _clear_task_data():
         _task_state["collection_flags"] = {}
         _task_state["running"] = False
         _task_state["paused"] = False
+        _task_state["completed"] = dict.fromkeys(("fetch", "tmdb", "analyze", "dedup"), False)
 
 _clear_task_data()
 
@@ -86,7 +104,28 @@ def _format_error(e: Exception, step: str = "") -> str:
 
 def _background_task(step: str, func, *args, **kwargs):
     with _task_state["lock"]:
+        if _task_state["running"]:
+            return False
+        steps = ("fetch", "tmdb", "analyze", "dedup")
+        for invalid in steps[steps.index(step):]:
+            _task_state["completed"][invalid] = False
+        if step == "fetch":
+            _task_state["tmdb_matches"] = []
+            _task_state["profiles"] = []
+            _task_state["dedup_results"] = []
+        elif step == "tmdb":
+            _task_state["tmdb_matches"] = []
+            _task_state["profiles"] = []
+            _task_state["dedup_results"] = []
+        elif step == "analyze":
+            _task_state["profiles"] = []
+            _task_state["dedup_results"] = []
+        elif step == "dedup":
+            _task_state["dedup_results"] = []
+        _task_state["paused"] = False
+        _task_state.pop("stop_requested", None)
         _task_state["running"] = True
+        _task_state["error"] = ""
         _task_state["current_step"] = step
         _task_state["progress"] = {"current": 0, "total": 0, "message": "准备中..."}
 
@@ -99,15 +138,18 @@ def _background_task(step: str, func, *args, **kwargs):
                 if _task_state.pop("canceled", False):
                     _task_state["progress"]["message"] = "已停止"
                 else:
+                    _task_state["completed"][step] = True
                     _task_state["progress"]["message"] = "完成"
         except Exception as e:
             import traceback
             with _task_state["lock"]:
                 _task_state["running"] = False
-                _task_state["progress"]["message"] = _format_error(e, step)
+                _task_state["error"] = _format_error(e, step)
+                _task_state["progress"]["message"] = _task_state["error"]
                 print(f"[{step}] Error: {e}\n{traceback.format_exc()}", flush=True)
 
     threading.Thread(target=_run, daemon=True).start()
+    return True
 
 
 def _store_result(step: str, result):
@@ -392,7 +434,7 @@ def api_fetch_torrents():
                 all_torrents.extend(qb.get_torrents(category=cat))
             except Exception as e:
                 _progress_callback(0, 0, f"获取 {cat} 失败: {e}")
-                return
+                raise RuntimeError(f"获取 {cat} 失败: {e}") from e
         seen = set()
         unique = []
         for t in all_torrents:
@@ -408,7 +450,8 @@ def api_fetch_torrents():
         _progress_callback(len(unique), len(unique), f"获取完成，共 {len(unique)} 个种子")
         return unique
 
-    _background_task("fetch", _fetch)
+    if not _background_task("fetch", _fetch):
+        return jsonify({"status": "error", "error": "后台任务正在运行"}), 409
     return jsonify({"status": "ok", "message": "开始获取种子列表"})
 
 
@@ -427,6 +470,47 @@ def api_get_torrents():
             "is_collection": is_collection(t.get("hash", "")),
         })
     return jsonify({"status": "ok", "torrents": result, "count": len(result)})
+
+
+TMDB_CACHE_DIR = os.path.join(BASE_DIR, "data", "tmdb_cache")
+
+def _tmdb_cache_path(torrent_hash, name):
+    key = hashlib.sha256(f"{torrent_hash}\0{name}".encode()).hexdigest()
+    return os.path.join(TMDB_CACHE_DIR, key + ".json")
+
+def _tmdb_cache_read(torrent_hash, name):
+    try:
+        with open(_tmdb_cache_path(torrent_hash, name), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+def _tmdb_cache_write(entry):
+    if not entry.get("tmdb_id"):
+        return
+    os.makedirs(TMDB_CACHE_DIR, exist_ok=True)
+    path = _tmdb_cache_path(entry["torrent_hash"], entry["torrent_name"])
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(entry, f, ensure_ascii=False)
+    os.replace(tmp, path)
+
+@app.route("/api/cache/<kind>", methods=["DELETE"])
+def api_clear_cache(kind):
+    directories = {"tmdb": TMDB_CACHE_DIR, "analyze": CACHE_DIR}
+    if kind not in directories:
+        return jsonify({"status": "error", "error": "未知缓存类型"}), 404
+    with _task_state["lock"]:
+        if _task_state["running"]:
+            return jsonify({"status": "error", "error": "任务运行中无法清空缓存"}), 409
+        directory = directories[kind]
+        count = 0
+        if os.path.isdir(directory):
+            for name in os.listdir(directory):
+                if name.endswith(".json") and os.path.isfile(os.path.join(directory, name)):
+                    os.remove(os.path.join(directory, name))
+                    count += 1
+    return jsonify({"status": "ok", "cleared": count})
 
 
 # ─── TMDB 匹配 API ──────────────────────────────────────────
@@ -466,6 +550,8 @@ def api_tmdb_match():
 
             if idx > 0 and idx % 10 == 0:
                 _progress_callback(idx, total, f"匹配中 ({idx}/{total})")
+            title = year = tmdb_id = tmdb_title_cn = tmdb_title_en = tmdb_year = tmdb_rating = ""
+            is_col = False
             try:
                 seed_name = t.get("name", "")
                 is_col = is_collection(t.get("hash", ""))
@@ -486,7 +572,7 @@ def api_tmdb_match():
                 tmdb_rating = ""
 
                 if title:
-                    result = client.match_entry(seed_name, title, year)
+                    result = _tmdb_cache_read(t.get("hash", ""), seed_name) or client.match_entry(seed_name, title, year)
                     if result and result.get("tmdb_id"):
                         tmdb_id = result["tmdb_id"]
                         tmdb_title_cn = result["tmdb_title_cn"]
@@ -509,6 +595,7 @@ def api_tmdb_match():
                 "tmdb_rating": tmdb_rating if 'tmdb_rating' in dir() else "",
                 "is_collection": is_col if 'is_col' in dir() else False,
             }
+            _tmdb_cache_write(entry)
             matches.append(entry)
             # 每匹配一个就实时更新到全局状态
             with _task_state["lock"]:
@@ -517,7 +604,8 @@ def api_tmdb_match():
         _progress_callback(total, total, f"TMDB 匹配完成，共 {total} 个种子")
         return matches
 
-    _background_task("tmdb", _run_tmdb)
+    if not _background_task("tmdb", _run_tmdb):
+        return jsonify({"status": "error", "error": "后台任务正在运行"}), 409
     return jsonify({"status": "ok", "message": "开始 TMDB 匹配"})
 
 
@@ -559,6 +647,9 @@ def api_tmdb_update():
                 m["tmdb_title_cn"] = tmdb_title_cn or m.get("parsed_title", "")
                 m["tmdb_title_en"] = tmdb_title_en or m.get("parsed_title", "")
                 m["tmdb_rating"] = tmdb_rating
+                _tmdb_cache_write(m)
+                _task_state["dedup_results"] = []
+                _task_state["completed"]["dedup"] = False
                 break
 
     return jsonify({"status": "ok", "message": f"已更新 {torrent_hash[:16]} -> TMDB ID {tmdb_id}"})
@@ -583,6 +674,8 @@ def api_tmdb_fetch():
 def api_tmdb_pause():
     """Toggle pause/resume for TMDB matching."""
     with _task_state["lock"]:
+        if not _task_state["running"] or _task_state["current_step"] != "tmdb":
+            return jsonify({"status": "error", "error": "该任务未运行"}), 409
         _task_state["paused"] = not _task_state["paused"]
         paused = _task_state["paused"]
     return jsonify({"status": "ok", "paused": paused})
@@ -629,9 +722,10 @@ def api_analyze_start():
 
     with _task_state["lock"]:
         torrents = list(_task_state["torrents"])
+        matched = _task_state["completed"]["tmdb"]
 
-    if not torrents:
-        return jsonify({"status": "error", "error": "请先获取种子列表"}), 400
+    if not torrents or not matched:
+        return jsonify({"status": "error", "error": "请先完成 TMDB 匹配"}), 400
 
     def _run_analyze():
         collection_strategy = config.get("collection_strategy", "skip")
@@ -671,7 +765,8 @@ def api_analyze_start():
         _progress_callback(len(profiles), len(profiles), f"分析完成，共 {len(profiles)} 个视频文件")
         return profiles
 
-    _background_task("analyze", _run_analyze)
+    if not _background_task("analyze", _run_analyze):
+        return jsonify({"status": "error", "error": "后台任务正在运行"}), 409
     return jsonify({"status": "ok", "message": "开始深度分析"})
 
 
@@ -694,6 +789,8 @@ def api_analyze_stop():
 def api_analyze_pause():
     """Toggle pause/resume for deep analysis."""
     with _task_state["lock"]:
+        if not _task_state["running"] or _task_state["current_step"] != "analyze":
+            return jsonify({"status": "error", "error": "该任务未运行"}), 409
         _task_state["paused"] = not _task_state["paused"]
         paused = _task_state["paused"]
     return jsonify({"status": "ok", "paused": paused})
@@ -713,8 +810,9 @@ def api_dedup_run():
     with _task_state["lock"]:
         profiles = list(_task_state["profiles"])
         tmdb_matches = list(_task_state["tmdb_matches"])
+        analyzed = _task_state["completed"]["analyze"]
 
-    if not profiles:
+    if not profiles or not analyzed:
         return jsonify({"status": "error", "error": "请先完成深度分析"}), 400
 
     def _run_dedup():
@@ -726,7 +824,8 @@ def api_dedup_run():
         _progress_callback(0, 0, f"去重完成，发现 {summary['duplicate_groups']} 组重复，{summary['delete_candidates']} 个待删除")
         return results
 
-    _background_task("dedup", _run_dedup)
+    if not _background_task("dedup", _run_dedup):
+        return jsonify({"status": "error", "error": "后台任务正在运行"}), 409
     return jsonify({"status": "ok", "message": "开始去重计算"})
 
 
@@ -753,27 +852,58 @@ def _compute_summary(results: list[dict]) -> dict:
 @app.route("/api/torrents/delete", methods=["POST"])
 def api_delete_torrents():
     data = request.get_json(silent=True) or {}
-    hashes = data.get("hashes", [])
+    hashes = data.get("hashes")
     delete_files = data.get("delete_files", True)
+    if (not isinstance(hashes, list) or not hashes or
+            any(not isinstance(h, str) or not h or "|" in h or h.lower() == "all" for h in hashes) or
+            not isinstance(delete_files, bool)):
+        return jsonify({"status": "error", "error": "种子列表无效"}), 400
+    hashes = list(dict.fromkeys(hashes))
+    with _task_state["lock"]:
+        if _task_state["running"]:
+            return jsonify({"status": "error", "error": "后台任务正在运行"}), 409
+        known = {t.get("hash") for t in _task_state["torrents"]}
+        if not set(hashes) <= known:
+            return jsonify({"status": "error", "error": "种子列表已变化，请重新获取"}), 400
+        _task_state["running"] = True
+        _task_state["current_step"] = "delete"
 
-    if not hashes:
-        return jsonify({"status": "error", "error": "未提供种子 hash"}), 400
-
+    sent = False
     try:
         client = QBClient()
-        client.delete_torrents(hashes, delete_files=delete_files)
+        before = {t.get("hash") for t in client.get_torrents()}
+        missing = set(hashes) - before
+        targets = [h for h in hashes if h in before]
+        if targets:
+            sent = True
+            client.delete_torrents(targets, delete_files=delete_files)
+            after = {t.get("hash") for t in client.get_torrents()}
+        else:
+            after = before
+        deleted = [h for h in targets if h not in after]
+        remaining = [h for h in targets if h in after]
+        absent = set(deleted) | missing
         with _task_state["lock"]:
-            _task_state["torrents"] = [
-                t for t in _task_state["torrents"]
-                if t.get("hash", "") not in hashes
-            ]
-            _task_state["profiles"] = [
-                p for p in _task_state["profiles"]
-                if p.torrent_hash not in hashes
-            ]
-        return jsonify({"status": "ok", "deleted": len(hashes)})
+            _task_state["torrents"] = [t for t in _task_state["torrents"] if t.get("hash") not in absent]
+            _task_state["profiles"] = [p for p in _task_state["profiles"] if p.torrent_hash not in absent]
+            _task_state["tmdb_matches"] = [m for m in _task_state["tmdb_matches"] if m.get("torrent_hash") not in absent]
+            _task_state["dedup_results"] = []
+            _task_state["completed"]["dedup"] = False
+        return jsonify({"status": "ok", "deleted": len(deleted), "deleted_hashes": deleted,
+                        "missing": len(missing), "remaining": len(remaining)})
     except Exception as e:
-        return jsonify({"status": "error", "error": str(e)}), 500
+        if sent:
+            with _task_state["lock"]:
+                _task_state["dedup_results"] = []
+                _task_state["completed"]["dedup"] = False
+                _task_state["completed"]["fetch"] = False
+                _task_state["completed"]["tmdb"] = False
+                _task_state["completed"]["analyze"] = False
+        return jsonify({"status": "error", "error": ("删除结果无法确认，请重新获取种子：" if sent else "删除前查询失败：") + str(e),
+                        "requires_refresh": sent}), 500
+    finally:
+        with _task_state["lock"]:
+            _task_state["running"] = False
 
 
 # ─── 进度 API ───────────────────────────────────────────────
@@ -783,6 +913,8 @@ def api_get_progress():
     with _task_state["lock"]:
         return jsonify({
             "running": _task_state["running"],
+            "paused": _task_state["paused"],
+            "error": _task_state["error"],
             "current_step": _task_state["current_step"],
             "progress": dict(_task_state["progress"]),
         })
@@ -794,8 +926,11 @@ def api_get_status():
     with _task_state["lock"]:
         return jsonify({
             "running": _task_state["running"],
+            "paused": _task_state["paused"],
+            "error": _task_state["error"],
             "current_step": _task_state["current_step"],
             "progress": dict(_task_state["progress"]),
+            "completed": dict(_task_state["completed"]),
             "has_torrents": len(_task_state["torrents"]) > 0,
             "has_tmdb": len(_task_state["tmdb_matches"]) > 0,
             "has_profiles": len(_task_state["profiles"]) > 0,
@@ -807,11 +942,15 @@ def api_get_status():
 def api_reset():
     """Clear all cached data. Called on page refresh."""
     with _task_state["lock"]:
+        if _task_state["running"]:
+            return jsonify({"status": "error", "error": "后台任务正在运行"}), 409
+        _task_state["error"] = ""
         _task_state["torrents"] = []
         _task_state["tmdb_matches"] = []
         _task_state["profiles"] = []
         _task_state["dedup_results"] = []
         _task_state["collection_flags"] = {}
+        _task_state["completed"] = dict.fromkeys(("fetch", "tmdb", "analyze", "dedup"), False)
         _task_state["running"] = False
         _task_state["current_step"] = ""
         _task_state["progress"] = {"current": 0, "total": 0, "message": ""}
@@ -836,6 +975,6 @@ if __name__ == "__main__":
     import os
     debug = os.environ.get("FLASK_DEBUG", "0") == "1"
     try:
-        app.run(host="0.0.0.0", port=5000, debug=debug)
+        app.run(host="0.0.0.0", port=8899, debug=debug)
     finally:
         unmount_smb()

@@ -23,6 +23,6 @@ RUN mkdir -p /config
 ENV QB_MOVIE_CONFIG=/config/config.json
 ENV PYTHONUNBUFFERED=1
 
-EXPOSE 8090
+EXPOSE 8899
 
 ENTRYPOINT ["/app/entrypoint.sh"]

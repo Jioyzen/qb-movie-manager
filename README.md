@@ -140,7 +140,7 @@ python3 app.py
 
 ### 首次使用
 
-1. 浏览器访问 `http://你的IP:5000`
+1. 浏览器访问 `http://你的IP:8899`
 2. 进入 **配置** 页面，点击"测试连接并获取分类"
 3. 勾选需要处理的分类（如"4K电影"、"高清电影"）
 4. 点击"保存配置，开始获取种子"
@@ -154,14 +154,14 @@ python3 app.py
 
 ```bash
 python3 app.py
-# 监听 http://0.0.0.0:5000
+# 监听 http://0.0.0.0:8899
 ```
 
 ### 生产环境（gunicorn）
 
 ```bash
 pip install gunicorn
-gunicorn -w 1 -b 0.0.0.0:5000 app:app
+gunicorn -w 1 -b 0.0.0.0:8899 app:app
 ```
 
 > 注意：使用单 worker 模式，因为应用使用全局状态和线程锁。
